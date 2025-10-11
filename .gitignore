@@ -1,0 +1,60 @@
+# Vivado Project Files
+*.jou
+*.log
+*.str
+*.xpr.backup.*
+*.backup.*
+
+# Vivado Build Directories
+.Xil/
+*/Exponentiation.cache/
+*/Exponentiation.hw/
+*/Exponentiation.ip_user_files/
+*/Exponentiation.runs/
+*/Exponentiation.sim/
+*/RSA_accelerator.cache/
+*/RSA_accelerator.hw/
+*/RSA_accelerator.ip_user_files/
+*/RSA_accelerator.runs/
+*/RSA_accelerator.sim/
+*/RSA_soc.cache/
+*/RSA_soc.hw/
+*/RSA_soc.ip_user_files/
+*/RSA_soc.runs/
+*/RSA_soc.sim/
+
+# Synthesis and Implementation Results
+*.rpt
+*.dcp
+*.bit
+*.ltx
+*.debug
+
+# Simulation Files
+*.wdb
+*.wcfg
+*.vcd
+*.saif
+
+# IP Core Files (keep .xci but ignore generated files)
+ip/**/*
+!ip/**/*.xci
+!ip/**/*.xml
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary Files
+*~
+*.tmp
+*.temp
+
+# Backup Files
+*.bak
+*.orig

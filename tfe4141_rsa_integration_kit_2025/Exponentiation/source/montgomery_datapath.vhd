@@ -1,160 +1,130 @@
-library IEEE;
-use IEEE.STD_LOGIC_1164.ALL;
-use IEEE.NUMERIC_STD.ALL;
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
-entity montgomery_datapath is
+entity montgomery_mult_datapath is
     generic (
-        C_block_size : integer := 256
+           WIDTH : integer := 256  
     );
     port (
-        clk : in std_logic;
-        reset_n : in std_logic;
-        
-        -- Data inputs
-        A : in std_logic_vector(C_block_size-1 downto 0);
-        B : in std_logic_vector(C_block_size-1 downto 0);
-        N : in std_logic_vector(C_block_size-1 downto 0);
+           -- Clock and reset
+           clk    : in  std_logic;   
+           reset  : in  std_logic;   
 
-        -- Control inputs
-        load_A_reg : in std_logic;
-        load_B_reg : in std_logic;
-        load_N_reg : in std_logic;
-        load_result_reg : in std_logic;
-        
-        -- Output
-        result : out std_logic_vector(C_block_size-1 downto 0)
+           -- Control strobes (driven by controller)
+           load_registers : in std_logic;
+           shift_registers : in std_logic;
+           compute_AiB : in std_logic;  
+           compute_S   : in std_logic;  
+
+           -- Control interface
+     -- Goes high when computation is finished (stays high until enable='0')
+
+           A      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplicand
+           B      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplier
+           N      : in  std_logic_vector(WIDTH-1 downto 0);  -- Modulus (must be odd)
+           S      : out std_logic_vector(WIDTH-1 downto 0);  -- Result: S = (A * B * R⁻¹) mod N
+           -- Debug outputs (temporary)
+           debug_res_reg : out std_logic_vector(WIDTH-1 downto 0);
+           debug_S_reg   : out std_logic_vector(WIDTH downto 0);
+           debug_AiB     : out std_logic_vector(WIDTH downto 0);
+           debug_a_lsb   : out std_logic;
+           debug_qi      : out std_logic;
+           debug_res_add1: out std_logic_vector(WIDTH downto 0)
     );
-end montgomery_datapath;
+end montgomery_mult_datapath;
 
-architecture Behavioral of montgomery_datapath is
+architecture Behavioral of montgomery_mult_datapath is
+    -- Registers and pipeline signals
+    signal S_reg : std_logic_vector(WIDTH downto 0);
+    signal res_reg : std_logic_vector(WIDTH-1 downto 0);  -- accumulator
+    signal A_reg : std_logic_vector(WIDTH-1 downto 0);
+    signal B_reg : std_logic_vector(WIDTH-1 downto 0);
+    signal N_reg : std_logic_vector(WIDTH-1 downto 0);
 
-    signal A_reg, B_reg, N_reg : std_logic_vector(C_block_size-1 downto 0);
-    signal result_reg : std_logic_vector(C_block_size-1 downto 0);
-    signal div_2_reg : std_logic_vector(C_block_size-1 downto 0);
-
-    signal A_lsb : std_logic;
-    signal Ai_B_mux : std_logic_vector(C_block_size-1 downto 0);
-    signal N_mux : std_logic_vector(C_block_size-1 downto 0);
-
-    signal AiB_res_adder : std_logic_vector(C_block_size downto 0);
-    signal AiB_res_adder_reg : std_logic_vector(C_block_size downto 0);
-    signal AiB_res_adder_lsb : std_logic;
-    signal AiB_res_plus_N_adder : std_logic_vector(C_block_size downto 0);
+    -- Intermediate signals
+    signal AiB_input : std_logic_vector(WIDTH downto 0);
+    signal AiB_comb  : std_logic_vector(WIDTH downto 0);
+    signal AiB_reg   : std_logic_vector(WIDTH downto 0);
+    signal qi_reg    : std_logic := '0';
+    signal N_mux     : std_logic_vector(WIDTH downto 0);
+    signal a_lsb : std_logic := '0';
 
 begin
+    a_lsb <= A_reg(0);
+    AiB_input <= ('0' & B_reg) when a_lsb = '1' else (others => '0');
+    AiB_comb <= std_logic_vector(resize(unsigned('0' & res_reg), WIDTH+1) + resize(unsigned(AiB_input), WIDTH+1));
 
-    A_process : process(clk, reset_n)
-    begin
-        if reset_n = '0' then
-            A_reg <= (others => '0');
-            A_lsb <= '0';
-        elsif clk'event and clk = '1' then
-            if load_A_reg = '1' then
-                A_reg <= A;
-                A_lsb <= A(0);  -- Capture LSB of new input
-            else
-                A_lsb <= A_reg(0);  -- Capture current LSB before shift
-                A_reg <= '0' & A_reg(C_block_size-1 downto 1);
-            end if;
-        end if;
-    end process;
+    N_mux <= ('0' & N_reg) when qi_reg = '1' else (others => '0');
 
-    B_process : process(clk, reset_n)
-    begin
-        if reset_n = '0' then
-            B_reg <= (others => '0');
-        elsif clk'event and clk = '1' then
-            if load_B_reg = '1' then
-                B_reg <= B;
-            else
-                B_reg <= B_reg; 
-            end if;
-        end if;
-    end process;
-
-    N_process : process(clk, reset_n)
-    begin
-        if reset_n = '0' then
-            N_reg <= (others => '0');
-        elsif clk'event and clk = '1' then
-            if load_N_reg = '1' then
-                N_reg <= N;
-            else
-                N_reg <= N_reg; 
-            end if;
-        end if;
-    end process;
-
-
-    process(A_reg, B_reg, A_lsb)
-    begin
-        if A_lsb = '1' then
-            Ai_B_mux <= B_reg;
-        else
-            Ai_B_mux <= (others => '0');
-        end if;
-    end process;
-
-    process(N_reg, AiB_res_adder_lsb)
-    begin
-        if AiB_res_adder_lsb = '1' then
-            N_mux <= N_reg;
-        else
-            N_mux <= (others => '0');
-        end if;
-    end process;
-
-    -- First adder: registered for better timing
-    add1_reg: process(clk, reset_n)
-    begin
-        if reset_n = '0' then
-            AiB_res_adder_reg <= (others => '0');
-        elsif clk'event and clk = '1' then
-            AiB_res_adder_reg <= std_logic_vector(unsigned('0' & Ai_B_mux) + unsigned('0' & result_reg));
-        end if;
-    end process;
     
-    -- Extract LSB for next stage (combinational)
-    AiB_res_adder_lsb <= AiB_res_adder_reg(0);
-
-    -- Second adder: registered for better timing
-    add2_reg: process(clk, reset_n)
+    ResShift_proc : process(clk, reset)
     begin
-        if reset_n = '0' then
-            AiB_res_plus_N_adder <= (others => '0');
-        elsif clk'event and clk = '1' then
-            AiB_res_plus_N_adder <= std_logic_vector(unsigned(AiB_res_adder_reg) + unsigned('0' & N_mux));
-        end if;
-    end process;
-
-    -- Divide by 2: registered (right shift by 1)
-    div2_process : process(clk, reset_n)
-    begin
-        if reset_n = '0' then
-            div_2_reg <= (others => '0');
-        elsif clk'event and clk = '1' then
-            div_2_reg <= '0' & AiB_res_plus_N_adder(C_block_size downto 1);
-        end if;
-    end process;
-
-    result_process : process(clk, reset_n)
-    begin   
-        if reset_n = '0' then
-            result_reg <= (others => '0');
-        elsif clk'event and clk = '1' then
-            if load_result_reg = '1' then
-                result_reg <= div_2_reg;
-            -- Don't clear result_reg when load_result_reg is not active
-            -- Keep the current value for iterative computation
+        if reset = '1' then
+            A_reg <= (others => '0');
+            B_reg <= (others => '0');
+            N_reg <= (others => '0');
+            res_reg <= (others => '0');
+           
+        elsif rising_edge(clk) then
+            if load_registers = '1' then
+                A_reg <= A;
+                B_reg <= B;
+                N_reg <= N;
+                res_reg <= (others => '0');
+                
+            elsif shift_registers = '1' then
+                res_reg <= S_reg(WIDTH downto 1);
+                A_reg <= '0' & A_reg(WIDTH-1 downto 1);
+               
             end if;
         end if;
-    end process;
+    end process ResShift_proc;
 
+    -- Cycle 1: register AiB_comb and its LSB into AiB_reg and qi_reg when compute_AiB asserted
+    AiB_reg_proc : process(clk, reset)
+    begin
+        if reset = '1' then
+            AiB_reg <= (others => '0');
+            qi_reg <= '0';
+        elsif rising_edge(clk) then
+            if load_registers = '1' then
+                AiB_reg <= (others => '0');
+                qi_reg <= '0';
+            elsif compute_AiB = '1' then
+                AiB_reg <= AiB_comb;
+                qi_reg <= AiB_comb(0);
+            end if;
+        end if;
+    end process AiB_reg_proc;
 
-    result <= result_reg;
+    -- Cycle 2: compute S_reg = AiB_reg + (qi_reg ? N : 0) when compute_S asserted
+    S_compute_proc : process(clk, reset)
+        variable sum2 : unsigned(WIDTH downto 0);
+    begin
+        if reset = '1' then
+            S_reg <= (others => '0');
+        elsif rising_edge(clk) then
+            if load_registers = '1' then
+                S_reg <= (others => '0');
+            elsif compute_S = '1' then
+                if qi_reg = '0' then
+                    S_reg <= AiB_reg;
+                else
+                    sum2 := resize(unsigned(AiB_reg), WIDTH+1) + resize(unsigned('0' & N_reg), WIDTH+1);
+                    S_reg <= std_logic_vector(sum2);
+                end if;
+            end if;
+        end if;
+    end process S_compute_proc;
 
+    -- Debug outputs
+    debug_res_reg <= res_reg;
+    debug_S_reg <= S_reg;
+    debug_AiB <= AiB_comb;      
+    debug_a_lsb <= a_lsb;
+    debug_qi <= qi_reg;         
+    debug_res_add1 <= AiB_reg;  
 
-
+    S <= res_reg(WIDTH-1 downto 0);
 end Behavioral;
-
-

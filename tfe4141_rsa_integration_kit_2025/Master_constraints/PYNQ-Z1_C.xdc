@@ -5,8 +5,10 @@
 
 ## Clock signal 125 MHz
 
-#set_property -dict { PACKAGE_PIN H16   IOSTANDARD LVCMOS33 } [get_ports { sysclk }]; #IO_L13P_T2_MRCC_35 Sch=sysclk
-#create_clock -add -name sys_clk_pin -period 8.00 -waveform {0 4} [get_ports { sysclk }];
+# Map top-level 'clk' port to the board 125 MHz sysclk pin (uncomment and adapt as needed)
+# If your top-level clock port is named something else, change 'clk' to that name.
+set_property -dict { PACKAGE_PIN H16   IOSTANDARD LVCMOS33 } [get_ports { clk }]; #IO_L13P_T2_MRCC_35 Sch=sysclk
+create_clock -add -name clk_pin -period 4.000 -waveform {0.000 2.000} [get_ports { clk }];
 
 ##Switches
 

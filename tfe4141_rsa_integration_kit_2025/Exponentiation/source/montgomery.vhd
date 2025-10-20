@@ -4,7 +4,7 @@ use ieee.numeric_std.all;
 
 entity montgomery is
     generic (
-           WIDTH : integer := 256  -- Operand width (e.g. 1024 bits for RSA)
+           WIDTH : integer := 8  -- Operand width (e.g. 1024 bits for RSA)
     );
     port (
            -- Clock and reset
@@ -36,6 +36,8 @@ architecture behavioral of montgomery is
 begin
 
     -- Instantiate controller
+    -- For radix-16 (k=8) windowed datapath we count windows instead of bits.
+    -- Set controller WIDTH generic to number of windows: WIDTH/8 (rounded up if needed).
     u_controller: entity work.montgomery_mult_controller
         generic map (
             WIDTH => WIDTH
@@ -54,6 +56,7 @@ begin
         );
 
     -- Instantiate datapath
+    -- New windowed datapath (radix-16, k=8) — uses DSPs via unsigned multiplies.
     u_datapath: entity work.montgomery_mult_datapath
         generic map (
             WIDTH => WIDTH
@@ -70,7 +73,16 @@ begin
             N      => N,
             S      => S,
             debug_res_reg => debug_res_reg,
-            debug_S_reg => debug_S_reg
+            debug_S_reg => debug_S_reg,
+            debug_AiB => open,
+            debug_a_lsb => open,
+            debug_qi => open,
+            debug_res_add1 => open
         );
+
+    -- Original bit-serial datapath (kept for reference)
+    -- u_datapath: entity work.montgomery_mult_datapath
+    --     generic map ( WIDTH => WIDTH )
+    --     port map ( ... );
 
 end behavioral;

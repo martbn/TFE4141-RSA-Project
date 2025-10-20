@@ -4,7 +4,7 @@ use ieee.numeric_std.all;
 
 entity montgomery_mult_datapath is
     generic (
-           WIDTH : integer := 256  
+           WIDTH : integer := 8
     );
     port (
            -- Clock and reset

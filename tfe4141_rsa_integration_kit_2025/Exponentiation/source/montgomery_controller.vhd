@@ -4,7 +4,7 @@ use ieee.numeric_std.all;
 
 entity montgomery_mult_controller is
     generic (
-           WIDTH : integer := 256  -- Operand width (e.g. 1024 bits for RSA)
+           WIDTH : integer := 8  -- Operand width (e.g. 1024 bits for RSA)
     );
     port (
            -- Clock and reset

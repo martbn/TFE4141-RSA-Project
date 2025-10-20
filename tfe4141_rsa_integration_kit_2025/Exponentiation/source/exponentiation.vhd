@@ -24,6 +24,10 @@ entity exponentiation is
 
 		--modulus
 		modulus 	: in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		-- Montgomery R constants (for testing)
+		R_mod_n     : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		R_squared   : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+
 
 		--utility
 		clk 		: in STD_LOGIC;
@@ -76,7 +80,9 @@ begin
 		precomp_addr => precomp_mem_addr,
 		precomp_we   => precomp_mem_we,
 		precomp_din  => precomp_mem_din,
-		precomp_dout => precomp_mem_dout
+		precomp_dout => precomp_mem_dout,
+		R_mod_n => R_mod_n,
+		R_squared => R_squared
 	);
 
 	-- Instantiate Montgomery Multiplier

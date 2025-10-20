@@ -20,6 +20,8 @@ entity exponentiation_controller is
         message       : in  std_logic_vector(C_block_size-1 downto 0);
         key           : in  std_logic_vector(C_block_size-1 downto 0);
         modulus       : in  std_logic_vector(C_block_size-1 downto 0);
+    R_mod_n       : in  std_logic_vector(C_block_size-1 downto 0);
+    R_squared     : in  std_logic_vector(C_block_size-1 downto 0);
         result        : out std_logic_vector(C_block_size-1 downto 0);
 
         -- Control signals for Montgomery multiplier
@@ -42,13 +44,8 @@ end exponentiation_controller;
 
 architecture RTL of exponentiation_controller is
 
-    -- Test vectors (256-bit) provided by test generator
-    -- R2_mod_n = R*R mod n
-    constant R2_mod_n  : std_logic_vector(C_block_size-1 downto 0) := x"56ddf8b43061ad3dbcd1757244d1a19e2e8c849dde4817e55bb29d1c20c06364";
-    -- R mod n
-    constant R_mod_n   : std_logic_vector(C_block_size-1 downto 0) := x"666dae8c529a9798eac7a157ff32d7edfd77038f56436722b36f298907008973";
-    -- R_squared alias (R^2 mod n)
-    constant R_squared : std_logic_vector(C_block_size-1 downto 0) := R2_mod_n;
+    -- R values (now supplied by top-level/testbench via ports):
+    -- R_mod_n and R_squared are provided as inputs to the controller
 
     -- State machine states
     type state_type is (
@@ -72,6 +69,7 @@ architecture RTL of exponentiation_controller is
 
     -- Precomputation index (tracks odd numbers: 3, 5, 7, ... up to 2^window_size-1)
     signal precomp_index : integer range 0 to (2**window_size) := 0;
+    signal precomp_index_next : integer range 0 to (2**window_size) := 0;
     signal precomp_curr_exp : integer range 0 to (2**window_size) := 0;
 
     -- Internal C and P registers
@@ -85,6 +83,7 @@ architecture RTL of exponentiation_controller is
 
     -- CLNW signals
     signal MSB_index   : integer range 0 to C_block_size-1       := 0;
+    signal MSB_index_next : integer range 0 to C_block_size-1  := 0;
     signal exp_counter : integer range 0 to C_block_size-1       := 0;
     signal NW          : integer range 0 to (2**window_size - 1) := 0;
     signal window_type : integer range 0 to 1 := 0;  -- 0: zero window, 1: non-zero window
@@ -96,6 +95,11 @@ architecture RTL of exponentiation_controller is
     signal wait_mem_ctr    : integer range 0 to 1 := 0;
     -- Flag indicating the EXP_INIT window was just read (one-shot)
     signal exp_init_done_sig : std_logic := '0';
+    signal exp_init_done_next : std_logic := '0';
+
+    -- Square counter used when performing repeated squarings
+    signal square_count : integer range 0 to C_block_size-1 := 0;
+    signal square_count_next : integer range 0 to C_block_size-1 := 0;
 begin
 
 
@@ -106,10 +110,23 @@ begin
         state <= IDLE;
         exp_counter <= 0;
         precomp_index <= 0;
+        precomp_index_next <= 0;
         C_reg <= (others => '0');
         P_reg <= (others => '0');
+    MSB_index <= 0;
+    exp_init_done_sig <= '0';
+    exp_init_done_next <= '0';
+    square_count <= 0;
+    square_count_next <= 0;
     elsif rising_edge(clk) then
         state <= next_state;
+
+        -- Update registered MSB index from next-state value
+        MSB_index <= MSB_index_next;
+        -- Update other registered values from their next-state drivers
+        precomp_index <= precomp_index_next;
+        exp_init_done_sig <= exp_init_done_next;
+        square_count <= square_count_next;
 
         -- Generate one-cycle start pulse for Montgomery core when requested
         mont_enable_pulse <= '0';
@@ -127,13 +144,7 @@ begin
         if state = IDLE and start = '1' then
             C_reg <= R_squared;
             P_reg <= message;
-            precomp_index <= 0;
-            exp_init_done_sig <= '0';
-        end if;
-
-        -- Set one-shot flag when we enter EXP_INIT
-        if state = PRECOMPUTE and next_state = EXP_INIT then
-            exp_init_done_sig <= '1';
+            -- precomp_index is driven by precomp_index_next (set in comb_proc)
         end if;
 
         -- Update C and P after Montgomery multiplication completes after CONV_2_MONT
@@ -158,30 +169,20 @@ begin
             P_reg <= montgomery_S;
         end if;
 
-        -- Clear the exp_init flag once we've advanced to WINDOW_SCAN (use it as a one-shot)
-        if state = WINDOW_SCAN then
-            exp_init_done_sig <= '0';
-        end if;
 
-        -- Sample BRAM read data into P_reg when in WINDOW_WAIT_MEM
+        -- Sample BRAM read data into C_reg when in WINDOW_WAIT_MEM
         if state = WINDOW_WAIT_MEM then
-            P_reg <= precomp_dout;
+            C_reg <= precomp_dout;
         end if;
 
-        -- Wait-counter and advance precompute index after a memory write (state WAIT_MEM_WRITE)
+        -- Wait-counter after a memory write (state WAIT_MEM_WRITE)
+        -- precomp_index is advanced by the comb_proc via precomp_index_next to avoid
+        -- combinational/sequential multiple drivers.
         if state = WAIT_MEM_WRITE then
             if wait_mem_ctr < 1 then
                 wait_mem_ctr <= wait_mem_ctr + 1;
             else
                 wait_mem_ctr <= wait_mem_ctr;
-            end if;
-            -- Only increment precomp_index on the second cycle in WAIT_MEM_WRITE
-            if wait_mem_ctr = 1 then
-                if precomp_index < (2**window_size - 1) then
-                    precomp_index <= precomp_index + 1;
-                else
-                    precomp_index <= precomp_index;
-                end if;
             end if;
         else
             wait_mem_ctr <= 0;
@@ -219,13 +220,14 @@ begin
 end process msb_scan_proc;
 
 comb_proc : process(all)
-    variable square_count : integer := 0;
     variable start_idx : integer := 0;
 begin
     -- default request deasserted
     msb_scan_request <= '0';
     -- Default outputs
     next_state <= state;
+    -- Default next-state for MSB_index is the current registered value
+    MSB_index_next <= MSB_index;
     montgomery_enable <= mont_enable_pulse;
     montgomery_A <= C_reg;
     montgomery_B <= P_reg;
@@ -236,11 +238,16 @@ begin
     mont_request <= '0';
     done <= '0';
     result <= P_reg;
+    -- Default next-state values (keep current)
+    precomp_index_next <= precomp_index;
+    exp_init_done_next <= exp_init_done_sig;
+    square_count_next <= square_count;
 
     case state is
         when IDLE =>
             if start = '1' then
                 next_state <= CONV_2_MONT;
+                precomp_index_next <= 0; -- initialize precompute index on start
             end if;
         when CONV_2_MONT =>
             if montgomery_done = '1' then
@@ -278,11 +285,17 @@ begin
                 else
                     next_state <= PRECOMPUTE;
                 end if;
+                -- On the second cycle, advance precompute index
+                if precomp_index < (2**window_size - 1) then
+                    precomp_index_next <= precomp_index + 1;
+                else
+                    precomp_index_next <= precomp_index;
+                end if;
             end if;
         when EXP_INIT =>
         -- Initialize exponentiation process by reading the first window from MSB index
             -- set initial MSB_index from the msb_ptr found by the concurrent scan
-            MSB_index <= msb_ptr;
+            MSB_index_next <= msb_ptr;
             -- prepare first window safely (handle truncated top window)
             start_idx := msb_ptr - window_size;
             if start_idx < 0 then
@@ -293,13 +306,15 @@ begin
             next_state  <= WINDOW_READ_MEM;
 
         when WINDOW_SCAN =>
+            -- mark that EXP_INIT window was read (one-shot)
+            exp_init_done_next <= '1';
             -- Scan for next Non-zero window in exponent
             if MSB_index = 0 then
                 next_state <= CONV_2_NORMAL;
             else
                 if key(MSB_index - 1) = '0' then
                     window_type <= 0;  -- Zero window
-                    MSB_index <= MSB_index - 1;
+                    MSB_index_next <= MSB_index - 1;
                     next_state <= WINDOW_SQUARE_START;
                 else
                     window_type <= 1;  -- Non-zero window
@@ -308,13 +323,15 @@ begin
                     if start_idx < 0 then
                         start_idx := 0;
                     end if;
-                    
+
+                    NW <= to_integer(unsigned(key(MSB_index downto start_idx + 1 )));
+
                     next_state <= WINDOW_READ_MEM;
                 end if;
             end if;
 
         when WINDOW_READ_MEM =>
-            MSB_index <= start_idx;
+            MSB_index_next <= start_idx;
             -- Read precomputed value from memory for current window NW
             precomp_addr <= std_logic_vector(to_unsigned(NW/2, precomp_addr'length));
             next_state <= WINDOW_WAIT_MEM;
@@ -324,12 +341,14 @@ begin
             -- If this was the initial EXP_INIT window, skip squaring and go
             -- directly to WINDOW_SCAN (we already used this precompute to set P_reg).
             if exp_init_done_sig = '1' then
-                next_state <= WINDOW_SCAN;
+                next_state <= WINDOW_SQUARE_START;
+                -- clear the one-shot after observing it
+                exp_init_done_next <= '0';
             else
                 -- precomp_dout is sampled synchronously in the sequential process when
                 -- state = WINDOW_WAIT_MEM (so one cycle is available). Proceed to
                 -- the squaring start state on the next cycle.
-                next_state <= WINDOW_SQUARE_START;
+                next_state <= WINDOW_SCAN;
             end if;
         when WINDOW_SQUARE_START =>
             -- Start squaring P_reg window_size times or once for zero window  
@@ -338,13 +357,13 @@ begin
                 mont_request <= '1';
                 montgomery_A <= P_reg;
                 montgomery_B <= P_reg;
-                square_count := 1;
+                square_count_next <= 1;
             else
                 -- Non-zero window: square window_size times
                 mont_request <= '1';
                 montgomery_A <= P_reg;
                 montgomery_B <= P_reg;
-                square_count := window_size;
+                square_count_next <= window_size;
             end if;
             next_state <= WINDOW_WAIT_MONT;
 
@@ -365,14 +384,14 @@ begin
 
         when WINDOW_SQUARE_CONTINUE =>
             mont_request <= '1';
-            square_count := square_count - 1;
+            square_count_next <= square_count - 1;
             next_state <= WINDOW_WAIT_MONT;
 
         when WINDOW_MULT_START =>
             -- Start multiplication P_reg * precomputed value for NW
             mont_request <= '1';
             montgomery_A <= P_reg;
-            montgomery_B <= precomp_dout;
+            montgomery_B <= C_reg;
             next_state <= WINDOW_DONE;
 
         when WINDOW_DONE =>

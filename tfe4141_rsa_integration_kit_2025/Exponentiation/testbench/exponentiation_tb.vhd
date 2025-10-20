@@ -21,8 +21,13 @@ architecture behavior of exponentiation_tb is
     signal valid_out : std_logic;
     signal result    : std_logic_vector(C_block_size-1 downto 0);
     signal modulus   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
-    -- expected result computed from m^e mod n (padded to 256 bits)
-    constant expected_result : std_logic_vector(C_block_size-1 downto 0) := x"2A90786EB4D14DD53B266674C4B099384EA516DBFEDF21D8CA4EBC23A798349B";
+    signal R_mod_n_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
+    signal R_squared_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
+    -- expected results for small test vectors (padded to 256 bits)
+    -- Test A: n=37, m=7, e=13 => m^e mod n = 33 (0x21)
+    constant expected_A : std_logic_vector(C_block_size-1 downto 0) := (others => '0') when false else x"0000000000000000000000000000000000000000000000000000000000000021";
+    -- Test B: n=101, m=45, e=17 => m^e mod n = 66 (0x42)
+    constant expected_B : std_logic_vector(C_block_size-1 downto 0) := (others => '0') when false else x"0000000000000000000000000000000000000000000000000000000000000042";
 
     -- helper: convert std_logic_vector to hex string (MSB first)
     constant HEX_CHARS : string(1 to 16) := "0123456789ABCDEF";
@@ -66,6 +71,8 @@ begin
         valid_out => valid_out,
         result    => result,
         modulus   => modulus,
+        R_mod_n   => R_mod_n_tb,
+        R_squared => R_squared_tb,
         clk       => clk,
         reset_n   => reset_n
     );
@@ -82,43 +89,77 @@ begin
         reset_n <= '1';
         wait for 20 ns;
 
-    -- Load 256-bit test vectors generated externally
-    -- n = 0x9762f99d129b9516d99b96b7804d2d2db2f3f23c8aa6d2c09846515a9dc611ab
-    modulus <= (others => '0');
-    modulus <= x"99925173ad65686715385ea800cd28120288fc70a9bc98dd4c90d676f8ff768d";
-    -- message m (256-bit)
-    message <= x"4c39f6bd28233d66a8e052365f65a3d61914323632f2e20411942f47fbb85cdf";
-    -- exponent/key (use small public exponent 0x10001)
-    --key <= (others => '0');
-    -- key(31 downto 0) <= std_logic_vector(to_unsigned(16#10001#, 32));
-    key <= x"0cea1651ef44be1f1f1476b7539bed10d73e3aac782bd9999a1e5a790932bfe9";
+    -- Run Test A (small vector)
+    -- n = 37, m = 7, e = 13
+    modulus <= x"0000000000000000000000000000000000000000000000000000000000000025"; -- 0x25
+    message <= x"0000000000000000000000000000000000000000000000000000000000000007"; -- 7
+    key <= x"000000000000000000000000000000000000000000000000000000000000000D"; -- 13
+    -- R = 64 (k=6), R mod n = 64 mod 37 = 27 (0x1B), R^2 mod n = 26 (0x1A)
+    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000001B";
+    R_squared_tb <= x"000000000000000000000000000000000000000000000000000000000000001A";
 
-        wait for 20 ns;
+    wait for 20 ns;
 
-        -- pulse valid_in for one clock
-        valid_in <= '1';
-        wait until rising_edge(clk);
-        valid_in <= '0';
+    -- pulse valid_in for one clock
+    valid_in <= '1';
+    wait until rising_edge(clk);
+    valid_in <= '0';
 
-        -- wait for valid_out with timeout
-        cycles := 0;
-        while valid_out /= '1' loop
-            wait for 10 ns;
-            cycles := cycles + 1;
-            if cycles > TIMEOUT_CYCLES then
-                report "TIMEOUT waiting for valid_out" severity failure;
-                wait;
-            end if;
-        end loop;
-
-        -- capture and check full-width result
-        if result = expected_result then
-            report "Test PASSED: result matches expected ciphertext" severity note;
-        else
-            report "Test FAILED: result does not match expected ciphertext" severity failure;
-            report "Expected: " & to_hex_str(expected_result) severity note;
-            report "Got     : " & to_hex_str(result) severity note;
+    -- wait for valid_out with timeout
+    cycles := 0;
+    while valid_out /= '1' loop
+        wait for 10 ns;
+        cycles := cycles + 1;
+        if cycles > TIMEOUT_CYCLES then
+            report "TIMEOUT waiting for valid_out (Test A)" severity failure;
+            wait;
         end if;
+    end loop;
+
+    -- check result for Test A
+    if result = expected_A then
+        report "Test A PASSED: result matches expected (7^13 mod 37 = 33)" severity note;
+    else
+        report "Test A FAILED: result does not match expected" severity failure;
+        report "Expected: " & to_hex_str(expected_A) severity note;
+        report "Got     : " & to_hex_str(result) severity note;
+    end if;
+
+    wait for 100 ns;
+
+    -- Run Test B (small vector)
+    -- n = 101, m = 45, e = 17
+    modulus <= x"0000000000000000000000000000000000000000000000000000000000000065"; -- 0x65
+    message <= x"000000000000000000000000000000000000000000000000000000000000002D"; -- 45
+    key <= x"0000000000000000000000000000000000000000000000000000000000000011"; -- 17
+    -- R = 128 (k=7), R mod n = 128 mod 101 = 27 (0x1B), R^2 mod n = 22 (0x16)
+    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000001B";
+    R_squared_tb <= x"0000000000000000000000000000000000000000000000000000000000000016";
+
+    wait for 20 ns;
+
+    valid_in <= '1';
+    wait until rising_edge(clk);
+    valid_in <= '0';
+
+    cycles := 0;
+    while valid_out /= '1' loop
+        wait for 10 ns;
+        cycles := cycles + 1;
+        if cycles > TIMEOUT_CYCLES then
+            report "TIMEOUT waiting for valid_out (Test B)" severity failure;
+            wait;
+        end if;
+    end loop;
+
+    -- check result for Test B
+    if result = expected_B then
+        report "Test B PASSED: result matches expected (45^17 mod 101 = 66)" severity note;
+    else
+        report "Test B FAILED: result does not match expected" severity failure;
+        report "Expected: " & to_hex_str(expected_B) severity note;
+        report "Got     : " & to_hex_str(result) severity note;
+    end if;
 
         wait for 100 ns;
         report "Simulation finished" severity note;

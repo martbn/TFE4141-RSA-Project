@@ -12,13 +12,14 @@ entity gamma is
   );
   port (
     -- inputs
+  
     m       : in  unsigned(WORD_WIDTH-1 downto 0); -- scalar multiplier (from earlier stage)
     p_i  : in  unsigned(WORD_WIDTH-1 downto 0); -- one word of modulus N
     t_in    : in  unsigned(WORD_WIDTH-1 downto 0); -- current T word
-    c_in    : in  unsigned(WORD_WIDTH downto 0);   -- incoming carry (width WORD_WIDTH+1)
+    c_in    : in  unsigned(WORD_WIDTH-1 downto 0);   -- incoming carry (width WORD_WIDTH+1)
     -- outputs (combinational)
     t_out   : out unsigned(WORD_WIDTH-1 downto 0); -- updated T word (low)
-    c_out   : out unsigned(WORD_WIDTH downto 0)    -- updated carry (may be wider)
+    c_out   : out unsigned(WORD_WIDTH-1 downto 0)    -- updated carry (may be wider)
   );
 end entity gamma;
 
@@ -31,7 +32,7 @@ begin
     variable prod_low : unsigned(WORD_WIDTH-1 downto 0);
     variable prod_high: unsigned(WORD_WIDTH-1 downto 0);
     variable sum_v  : unsigned(WORD_WIDTH downto 0); -- temporary for overflow detection
-    variable carry_v: unsigned(WORD_WIDTH downto 0);
+    variable carry_v: unsigned(WORD_WIDTH-1 downto 0);
     variable sum_full : unsigned(PROD_W downto 0);
   begin
     -- full product

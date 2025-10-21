@@ -4,7 +4,7 @@ use ieee.numeric_std.all;
 
 entity montgomery is
     generic (
-           WIDTH : integer := 256  -- Operand width (e.g. 1024 bits for RSA)
+           WIDTH : integer := 256  -- Operand width (e.g. 256 bits for RSA)
     );
     port (
            -- Clock and reset
@@ -18,8 +18,8 @@ entity montgomery is
            A      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplicand
            B      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplier
            N      : in  std_logic_vector(WIDTH-1 downto 0);  -- Modulus (must be odd)
-           S      : out std_logic_vector(WIDTH-1 downto 0)   -- Result: S = (A * B * R⁻¹) mod N
-        ;
+           S      : out std_logic_vector(WIDTH-1 downto 0);   -- Result: S = (A * B * R^(-1)) mod N
+        
         -- Debug outputs (forwarded from datapath)
         debug_res_reg : out std_logic_vector(WIDTH-1 downto 0);
         debug_S_reg   : out std_logic_vector(WIDTH downto 0)

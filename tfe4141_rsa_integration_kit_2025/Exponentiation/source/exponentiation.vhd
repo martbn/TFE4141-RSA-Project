@@ -8,25 +8,26 @@ entity exponentiation is
 	);
 	port (
 		--input controll
-		valid_in	: in STD_LOGIC;
-		ready_in	: out STD_LOGIC;
+		valid_in	      : in STD_LOGIC;
+		ready_in	      : out STD_LOGIC;
 
 		--input data
-		message 	: in STD_LOGIC_VECTOR ( C_block_size-1 downto 0 );
-		key 		: in STD_LOGIC_VECTOR ( C_block_size-1 downto 0 );
+		message 	      : in STD_LOGIC_VECTOR ( C_block_size-1 downto 0 );
+		key 		      : in STD_LOGIC_VECTOR ( C_block_size-1 downto 0 );
 
 		--output control
-		ready_out	: in STD_LOGIC;
-		valid_out	: out STD_LOGIC;
+		ready_out	      : in STD_LOGIC;
+		valid_out	      : out STD_LOGIC;
 
 		--output data
-		result 		: out STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		result 		      : out STD_LOGIC_VECTOR(C_block_size-1 downto 0);
 
 		--modulus
-		modulus 	: in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
-		-- Montgomery R constants (for testing)
-		R_mod_n     : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
-		R_squared   : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		modulus 	      : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		
+		-- Montgomery R constants
+		R_mod_n           : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+		R_squared_mod_n   : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
 
 
 		--utility
@@ -51,8 +52,6 @@ architecture Structural of exponentiation is
 	signal  precomp_mem_din  : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  precomp_mem_dout : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  precomp_mem_we   : STD_LOGIC;
-	signal  precomp_mem_en   : STD_LOGIC;
-	signal  precomp_mem_done : STD_LOGIC;
 
 begin
 	
@@ -66,7 +65,9 @@ begin
 		clk    => clk,
 		reset_n => reset_n,
 		start  => valid_in,
+		ready_in => ready_in,
 		done   => valid_out,
+		ready_out => ready_out,
 		message => message,
 		key     => key,
 		modulus => modulus,
@@ -82,7 +83,7 @@ begin
 		precomp_din  => precomp_mem_din,
 		precomp_dout => precomp_mem_dout,
 		R_mod_n => R_mod_n,
-		R_squared => R_squared
+		R_squared_mod_n => R_squared_mod_n
 	);
 
 	-- Instantiate Montgomery Multiplier

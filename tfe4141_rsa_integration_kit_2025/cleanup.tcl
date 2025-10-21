@@ -44,10 +44,11 @@ if {[file exists $Xil_folder]} {
 
 #reset working directory
 cd [file dirname [file normalize [info script]]]
-#delete log files
+#delete log files (except active vivado.log if currently running)
 puts "\n Deleting .log files\n"
 set to_delete [findFiles [file normalize $origin_dir] *.log]
 foreach file $to_delete {
 	puts "Deleting \"$file\""
-	file delete -force -- $file
+	# Wrap in catch to ignore errors when deleting active log files
+	catch {file delete -force -- $file}
 }

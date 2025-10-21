@@ -17,15 +17,15 @@ architecture behavior of exponentiation_tb is
     signal ready_in  : std_logic;
     signal message   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal key       : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
-    signal ready_out : std_logic;
+    signal ready_out : std_logic := '0';
     signal valid_out : std_logic;
     signal result    : std_logic_vector(C_block_size-1 downto 0);
     signal modulus   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal R_mod_n_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal R_squared_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     -- expected results for small test vectors (padded to 256 bits)
-    -- Test A: n=37, m=7, e=13 => m^e mod n = 33 (0x21)
-    constant expected_A : std_logic_vector(C_block_size-1 downto 0) := (others => '0') when false else x"0000000000000000000000000000000000000000000000000000000000000021";
+    -- Test A: n=53, m=10, e=7 => m^e mod n = 13 (0x0D)
+    constant expected_A : std_logic_vector(C_block_size-1 downto 0) := (others => '0') when false else x"000000000000000000000000000000000000000000000000000000000000000D";
     -- Test B: n=101, m=45, e=17 => m^e mod n = 66 (0x42)
     constant expected_B : std_logic_vector(C_block_size-1 downto 0) := (others => '0') when false else x"0000000000000000000000000000000000000000000000000000000000000042";
 
@@ -82,6 +82,7 @@ begin
         variable cycles : integer := 0;
         constant TIMEOUT_CYCLES : integer := 20000; -- safety timeout
         variable res_int : integer := 0;
+        variable res_vec : std_logic_vector(C_block_size-1 downto 0);
     begin
         -- reset
         reset_n <= '0';
@@ -90,40 +91,62 @@ begin
         wait for 20 ns;
 
     -- Run Test A (small vector)
-    -- n = 37, m = 7, e = 13
-    modulus <= x"0000000000000000000000000000000000000000000000000000000000000025"; -- 0x25
-    message <= x"0000000000000000000000000000000000000000000000000000000000000007"; -- 7
-    key <= x"000000000000000000000000000000000000000000000000000000000000000D"; -- 13
-    -- R = 64 (k=6), R mod n = 64 mod 37 = 27 (0x1B), R^2 mod n = 26 (0x1A)
-    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000001B";
-    R_squared_tb <= x"000000000000000000000000000000000000000000000000000000000000001A";
+    -- NEW VECTOR: n = 53, m = 10, e = 7
+    modulus <= x"0000000000000000000000000000000000000000000000000000000000000035"; -- 0x35 = 53
+    message <= x"000000000000000000000000000000000000000000000000000000000000000A"; -- 10
+    key <= x"0000000000000000000000000000000000000000000000000000000000000007"; -- 7
+    -- Use R = 2^256 (montgomery core WIDTH = 256). For n=53:
+    -- R mod n = 2^256 mod 53 = 10 (0x0A), R^2 mod n = 10^2 mod 53 = 47 (0x2F)
+    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000000A";
+    R_squared_tb <= x"000000000000000000000000000000000000000000000000000000000000002F";
 
     wait for 20 ns;
 
-    -- pulse valid_in for one clock
-    valid_in <= '1';
-    wait until rising_edge(clk);
-    valid_in <= '0';
-
-    -- wait for valid_out with timeout
+    -- Wait for DUT to indicate ready to accept inputs
     cycles := 0;
-    while valid_out /= '1' loop
+    while ready_in /= '1' loop
         wait for 10 ns;
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
-            report "TIMEOUT waiting for valid_out (Test A)" severity failure;
+            report "TIMEOUT waiting for ready_in (Test A)" severity failure;
             wait;
         end if;
     end loop;
 
+    -- Ensure consumer is ready to accept the result
+    ready_out <= '1';
+
+    -- pulse valid_in for one clock when ready_in is high
+    valid_in <= '1';
+    wait until rising_edge(clk);
+    valid_in <= '0';
+
+
+    -- wait for both valid_out and our ready_out (consumer accept)
+    cycles := 0;
+    while not (valid_out = '1' and ready_out = '1') loop
+        wait for 10 ns;
+        cycles := cycles + 1;
+        if cycles > TIMEOUT_CYCLES then
+            report "TIMEOUT waiting for valid_out & ready_out (Test A)" severity failure;
+            wait;
+        end if;
+    end loop;
+
+    -- read result when accepted
+    res_vec := result;
+
     -- check result for Test A
-    if result = expected_A then
-        report "Test A PASSED: result matches expected (7^13 mod 37 = 33)" severity note;
+    if res_vec = expected_A then
+        report "Test A PASSED: result matches expected (10^7 mod 53 = 13)" severity note;
     else
         report "Test A FAILED: result does not match expected" severity failure;
         report "Expected: " & to_hex_str(expected_A) severity note;
-        report "Got     : " & to_hex_str(result) severity note;
+        report "Got     : " & to_hex_str(res_vec) severity note;
     end if;
+
+    -- we've accepted the result, deassert consumer ready
+    ready_out <= '0';
 
     wait for 100 ns;
 
@@ -132,34 +155,59 @@ begin
     modulus <= x"0000000000000000000000000000000000000000000000000000000000000065"; -- 0x65
     message <= x"000000000000000000000000000000000000000000000000000000000000002D"; -- 45
     key <= x"0000000000000000000000000000000000000000000000000000000000000011"; -- 17
-    -- R = 128 (k=7), R mod n = 128 mod 101 = 27 (0x1B), R^2 mod n = 22 (0x16)
-    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000001B";
-    R_squared_tb <= x"0000000000000000000000000000000000000000000000000000000000000016";
+    -- Use R = 2^256 (montgomery core WIDTH = 256). For n=101:
+    -- R mod n = 2^256 mod 101 = 37 (0x25), R^2 mod n = 37^2 mod 101 = 56 (0x38)
+    R_mod_n_tb <= x"0000000000000000000000000000000000000000000000000000000000000025";
+    R_squared_tb <= x"0000000000000000000000000000000000000000000000000000000000000038";
 
     wait for 20 ns;
 
     valid_in <= '1';
     wait until rising_edge(clk);
     valid_in <= '0';
-
+    -- Wait for DUT to indicate ready to accept inputs
     cycles := 0;
-    while valid_out /= '1' loop
+    while ready_in /= '1' loop
         wait for 10 ns;
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
-            report "TIMEOUT waiting for valid_out (Test B)" severity failure;
+            report "TIMEOUT waiting for ready_in (Test B)" severity failure;
             wait;
         end if;
     end loop;
 
+    -- consumer ready
+    ready_out <= '1';
+
+    -- pulse valid_in for one clock when ready_in is high
+    valid_in <= '1';
+    wait until rising_edge(clk);
+    valid_in <= '0';
+
+    cycles := 0;
+    while not (valid_out = '1' and ready_out = '1') loop
+        wait for 10 ns;
+        cycles := cycles + 1;
+        if cycles > TIMEOUT_CYCLES then
+            report "TIMEOUT waiting for valid_out & ready_out (Test B)" severity failure;
+            wait;
+        end if;
+    end loop;
+
+    -- read result when accepted
+    res_vec := result;
+
     -- check result for Test B
-    if result = expected_B then
+    if res_vec = expected_B then
         report "Test B PASSED: result matches expected (45^17 mod 101 = 66)" severity note;
     else
         report "Test B FAILED: result does not match expected" severity failure;
         report "Expected: " & to_hex_str(expected_B) severity note;
-        report "Got     : " & to_hex_str(result) severity note;
+        report "Got     : " & to_hex_str(res_vec) severity note;
     end if;
+
+    -- we've accepted the result, deassert consumer ready
+    ready_out <= '0';
 
         wait for 100 ns;
         report "Simulation finished" severity note;

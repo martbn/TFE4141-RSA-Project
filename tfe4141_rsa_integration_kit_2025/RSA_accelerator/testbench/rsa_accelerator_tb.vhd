@@ -63,6 +63,8 @@ architecture struct of rsa_accelerator_tb is
 	-----------------------------------------------------------------------------
 	signal key_e_d         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal key_n           : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+	signal R_squared_mod_n : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+	signal R_mod_n         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal rsa_status      : std_logic_vector(31 downto 0);
 
 	-----------------------------------------------------------------------------
@@ -190,6 +192,10 @@ architecture struct of rsa_accelerator_tb is
 	--
 	--   # KEY N
 	--   99925173ad65686715385ea800cd28120288fc70a9bc98dd4c90d676f8ff768d
+	--   # KEY R
+	--   56ddf8b43061ad3dbcd1757244d1a19e2e8c849dde4817e55bb29d1c20c06364
+	--   # KEY Q
+	--   666dae8c529a9798eac7a157ff32d7edfd77038f56436722b36f298907008973
 	--   # KEY E
 	--   0000000000000000000000000000000000000000000000000000000000010001
 	--   # KEY D
@@ -199,54 +205,89 @@ architecture struct of rsa_accelerator_tb is
 	--
 	-----------------------------------------------------------------------------
 	procedure read_keys_and_command(
-		signal kn  : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		signal ked : out std_logic_vector(C_BLOCK_SIZE-1 downto 0)
+		signal kn              : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		signal ked             : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		signal krsq            : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		signal kr              : out std_logic_vector(C_BLOCK_SIZE-1 downto 0)
 	)is
-		variable line_from_file: line;
-		variable s1            : string(1 downto 1);
-		variable s64           : string(C_BLOCK_SIZE/4 downto 1);
-		variable command       : std_logic;
-		variable e             : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		variable d             : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		variable n             : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		variable line_from_file  : line;
+		variable s1              : string(1 downto 1);
+		variable s64             : string(C_BLOCK_SIZE/4 downto 1);
+		variable command         : std_logic;
+		variable e               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		variable d               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		variable n               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		variable R         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+		variable R_squared : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	begin
 		-- Read comment
 		readline(tc_inp, line_from_file);
+		report "READ COMMENT 1: " & line_from_file.all;
 		-- Read KEY N
 		readline(tc_inp, line_from_file);
 		read(line_from_file, s64);
 		n := str_to_stdvec(s64);
+		report "READ N: " & s64;
 		-- Read comment
 		readline(tc_inp, line_from_file);
+		report "READ COMMENT 2: " & line_from_file.all;
+		-- Read R_squared_mod_n
+		readline(tc_inp, line_from_file);
+		read(line_from_file, s64);
+		R_squared := str_to_stdvec(s64);
+		report "READ R_squared: " & s64;
+		-- Read comment
+		readline(tc_inp, line_from_file);
+		report "READ COMMENT 3: " & line_from_file.all;
+		-- Read R_mod_n
+		readline(tc_inp, line_from_file);
+		read(line_from_file, s64);
+		R := str_to_stdvec(s64);
+		report "READ R: " & s64;
+		-- Read comment
+		readline(tc_inp, line_from_file);
+		report "READ COMMENT 4: " & line_from_file.all;
 		-- Read KEY E
 		readline(tc_inp, line_from_file);
 		read(line_from_file, s64);
 		e := str_to_stdvec(s64);
+		report "READ E: " & s64;
 		-- Read comment
 		readline(tc_inp, line_from_file);
+		report "READ COMMENT 5: " & line_from_file.all;
 		-- Read KEY D
 		readline(tc_inp, line_from_file);
 		read(line_from_file, s64);
 		d := str_to_stdvec(s64);
+		report "READ D: " & s64;
 		-- Read comment
 		readline(tc_inp, line_from_file);
+		report "READ COMMENT 6: " & line_from_file.all;
 		-- Command (Encrypt/Decrypt)
 		-- 1: Encrypt
 		-- 0: Decrypt
 		readline(tc_inp, line_from_file);
 		read(line_from_file, s1);
 		command := str_to_stdvec(s1)(0);
+		report "READ COMMAND: " & s1;
 		-- Read empty line
 		readline(tc_inp, line_from_file);
 
 		-- Encryption key selected
 		if(command='1')then
 			ked <= e;
+			report "SELECTED ENCRYPTION KEY";
 		-- Decryption key selected
 		else
 			ked <= d;
+			report "SELECTED DECRYPTION KEY";
 		end if;
 		kn <= n;
+		krsq <= R_squared;
+		kr <= R;
+		report "ASSIGNED kn = " & stdvec_to_string(n);
+		report "ASSIGNED krsq = " & stdvec_to_string(R_squared);
+		report "ASSIGNED kr = " & stdvec_to_string(R);
 	end read_keys_and_command;
 
 	-----------------------------------------------------------------------------
@@ -337,6 +378,8 @@ begin
 		if (reset_n = '0') then
 			tc_ctrl_state          <= e_TC_START_TC;
 			key_n                  <= (others => '0');
+			R_squared_mod_n        <= (others => '0');
+			R_mod_n                <= (others => '0');
 			key_e_d                <= (others => '0');
 			test_case_id           <= 0;
 			start_tc               <= '0';
@@ -358,7 +401,7 @@ begin
 					tc_ctrl_state <= e_TC_RUN_TC;
 					open_tc_inp(test_case_id);
 					open_tc_otp(test_case_id);
-					read_keys_and_command(key_n, key_e_d);
+					read_keys_and_command(key_n, key_e_d, R_squared_mod_n, R_mod_n);
 					start_tc      <= '1';
 
 				-- Run the testcase
@@ -601,7 +644,9 @@ u_rsa_core : entity work.rsa_core
 		-----------------------------------------------------------------------------
 		key_e_d                => key_e_d,
 		key_n                  => key_n,
-		rsa_status             => rsa_status
+		rsa_status             => rsa_status,
+		R_squared_mod_n        => R_squared_mod_n,
+		R_mod_n                => R_mod_n
 
 	);
 

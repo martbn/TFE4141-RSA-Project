@@ -12,16 +12,18 @@ entity exponentiation_controller is
         clk    : in  std_logic;
         reset_n : in  std_logic;
 
-        -- Control signals for exponentiation datapath
-        start         : in  std_logic;
-        done          : out std_logic;
+    -- Control signals for exponentiation datapath (ready/valid)
+    start         : in  std_logic;  -- master -> valid
+    ready_in      : out std_logic;  -- controller signals ready to accept input
+    done          : out std_logic;  -- controller -> valid (result available)
+    ready_out     : in  std_logic;  -- consumer -> ready to accept result
 
         -- Signals for exponentiation
         message       : in  std_logic_vector(C_block_size-1 downto 0);
         key           : in  std_logic_vector(C_block_size-1 downto 0);
         modulus       : in  std_logic_vector(C_block_size-1 downto 0);
-    R_mod_n       : in  std_logic_vector(C_block_size-1 downto 0);
-    R_squared     : in  std_logic_vector(C_block_size-1 downto 0);
+        R_mod_n       : in  std_logic_vector(C_block_size-1 downto 0);
+        R_squared_mod_n     : in  std_logic_vector(C_block_size-1 downto 0);
         result        : out std_logic_vector(C_block_size-1 downto 0);
 
         -- Control signals for Montgomery multiplier
@@ -45,7 +47,7 @@ end exponentiation_controller;
 architecture RTL of exponentiation_controller is
 
     -- R values (now supplied by top-level/testbench via ports):
-    -- R_mod_n and R_squared are provided as inputs to the controller
+    -- R_mod_n and R_squared_mod_n are provided as inputs to the controller
 
     -- State machine states
     type state_type is (
@@ -86,7 +88,9 @@ architecture RTL of exponentiation_controller is
     signal MSB_index_next : integer range 0 to C_block_size-1  := 0;
     signal exp_counter : integer range 0 to C_block_size-1       := 0;
     signal NW          : integer range 0 to (2**window_size - 1) := 0;
+    signal NW_next     : integer range 0 to (2**window_size - 1) := 0;
     signal window_type : integer range 0 to 1 := 0;  -- 0: zero window, 1: non-zero window
+    signal window_type_next : integer range 0 to 1 := 0;
     -- MSB scan (run concurrently with PRECOMPUTE)
     signal msb_ptr        : integer range 0 to C_block_size-1 := C_block_size-1;
     signal msb_found      : std_logic := '0';
@@ -96,6 +100,9 @@ architecture RTL of exponentiation_controller is
     -- Flag indicating the EXP_INIT window was just read (one-shot)
     signal exp_init_done_sig : std_logic := '0';
     signal exp_init_done_next : std_logic := '0';
+
+    -- Handshake internal
+    signal data_accept : std_logic := '0'; -- asserted when start AND ready_in
 
     -- Square counter used when performing repeated squarings
     signal square_count : integer range 0 to C_block_size-1 := 0;
@@ -107,22 +114,29 @@ begin
 process(clk, reset_n)
 begin
     if reset_n = '0' then
+        -- Reset registered state and counters only (do not drive comb-only *_next signals)
         state <= IDLE;
         exp_counter <= 0;
         precomp_index <= 0;
-        precomp_index_next <= 0;
         C_reg <= (others => '0');
         P_reg <= (others => '0');
-    MSB_index <= 0;
-    exp_init_done_sig <= '0';
-    exp_init_done_next <= '0';
-    square_count <= 0;
-    square_count_next <= 0;
+        MSB_index <= 0;
+        NW <= 0;
+        window_type <= 0;
+        exp_init_done_sig <= '0';
+        square_count <= 0;
+        -- Montgomery control flags
+        mont_enable_pulse <= '0';
+        mont_running <= '0';
+        -- Memory wait counter
+        wait_mem_ctr <= 0;
     elsif rising_edge(clk) then
         state <= next_state;
 
         -- Update registered MSB index from next-state value
         MSB_index <= MSB_index_next;
+        NW <= NW_next;
+        window_type <= window_type_next;
         -- Update other registered values from their next-state drivers
         precomp_index <= precomp_index_next;
         exp_init_done_sig <= exp_init_done_next;
@@ -140,9 +154,9 @@ begin
             mont_running <= '0';
         end if;
         
-        -- Initialize C and P on start (synchronous load)
-        if state = IDLE and start = '1' then
-            C_reg <= R_squared;
+        -- Initialize C and P on data accept (synchronous load)
+        if state = IDLE and data_accept = '1' then
+            C_reg <= R_squared_mod_n;
             P_reg <= message;
             -- precomp_index is driven by precomp_index_next (set in comb_proc)
         end if;
@@ -220,14 +234,18 @@ begin
 end process msb_scan_proc;
 
 comb_proc : process(all)
-    variable start_idx : integer := 0;
+    variable start_idx : integer;
 begin
+    -- Initialize variable to avoid latch
+    start_idx := 0;
     -- default request deasserted
     msb_scan_request <= '0';
     -- Default outputs
     next_state <= state;
     -- Default next-state for MSB_index is the current registered value
     MSB_index_next <= MSB_index;
+    NW_next <= NW;
+    window_type_next <= window_type;
     montgomery_enable <= mont_enable_pulse;
     montgomery_A <= C_reg;
     montgomery_B <= P_reg;
@@ -242,12 +260,30 @@ begin
     precomp_index_next <= precomp_index;
     exp_init_done_next <= exp_init_done_sig;
     square_count_next <= square_count;
-
+    -- default handshake signals
+    ready_in <= '0';
+    data_accept <= '0';
     case state is
         when IDLE =>
+            -- Advertise ready to accept new inputs when in IDLE
+            ready_in <= '1';
+            -- Set default values for signals while idle
+            mont_request <= '0';
+            montgomery_A <= (others => '0');
+            montgomery_B <= (others => '0');
+            montgomery_N <= (others => '0');
+            montgomery_enable <= '0';
+            precomp_we <= '0';
+            precomp_addr <= (others => '0');
+            precomp_din <= (others => '0');
+            -- keep result following P_reg and default next-state values
+            
             if start = '1' then
+                data_accept <= '1';
+                -- Start an MSB scan for the incoming key/message so each test re-searches
+                msb_scan_request <= '1';
                 next_state <= CONV_2_MONT;
-                precomp_index_next <= 0; -- initialize precompute index on start
+                precomp_index_next <= 2; -- initialize precompute index on start
             end if;
         when CONV_2_MONT =>
             if montgomery_done = '1' then
@@ -301,7 +337,7 @@ begin
             if start_idx < 0 then
                 start_idx := 0;
             end if;
-            NW <= to_integer(unsigned(key(msb_ptr downto start_idx + 1 )));
+            NW_next <= to_integer(unsigned(key(msb_ptr downto start_idx )));
             -- msb_scan_proc will clear active when done; nothing for comb to drive here
             next_state  <= WINDOW_READ_MEM;
 
@@ -313,18 +349,18 @@ begin
                 next_state <= CONV_2_NORMAL;
             else
                 if key(MSB_index - 1) = '0' then
-                    window_type <= 0;  -- Zero window
+                    window_type_next <= 0;  -- Zero window
                     MSB_index_next <= MSB_index - 1;
                     next_state <= WINDOW_SQUARE_START;
                 else
-                    window_type <= 1;  -- Non-zero window
+                    window_type_next <= 1;  -- Non-zero window
                     -- compute safe start index for this window
                     start_idx := MSB_index - window_size;
                     if start_idx < 0 then
                         start_idx := 0;
                     end if;
 
-                    NW <= to_integer(unsigned(key(MSB_index downto start_idx + 1 )));
+                    NW_next <= to_integer(unsigned(key(MSB_index downto start_idx )));
 
                     next_state <= WINDOW_READ_MEM;
                 end if;
@@ -333,7 +369,7 @@ begin
         when WINDOW_READ_MEM =>
             MSB_index_next <= start_idx;
             -- Read precomputed value from memory for current window NW
-            precomp_addr <= std_logic_vector(to_unsigned(NW/2, precomp_addr'length));
+            precomp_addr <= std_logic_vector(to_unsigned(NW, precomp_addr'length));
             next_state <= WINDOW_WAIT_MEM;
 
         when WINDOW_WAIT_MEM =>
@@ -405,10 +441,11 @@ begin
             end if;
             -- Convert result back to normal form: Mont(P_reg, 1)
             mont_request <= '1';
-            montgomery_A <= P_reg;
-            montgomery_B <= std_logic_vector(to_unsigned(1, montgomery_B'length));
+            montgomery_A <= std_logic_vector(to_unsigned(1, montgomery_B'length));
+            montgomery_B <= C_reg;
         when FINISHED =>
             done <= '1';
+            next_state <= IDLE;
     end case;
 end process;
 

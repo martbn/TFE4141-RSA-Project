@@ -73,10 +73,15 @@ architecture RTL of exponentiation_controller is
     signal precomp_index : integer range 0 to (2**window_size) := 0;
     signal precomp_index_next : integer range 0 to (2**window_size) := 0;
     signal precomp_curr_exp : integer range 0 to (2**window_size) := 0;
+    -- Flag to skip the initial base^2 write so we store only odd powers (3,5,7,...)
+    signal precomp_first_done : std_logic := '0';
+    signal precomp_first_done_next : std_logic := '0';
 
     -- Internal C and P registers
     signal C_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal P_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
+    -- Stored base^2 (Montgomery domain)
+    signal base_sq_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
 
     -- Montgomery start/pulse
     signal mont_request       : std_logic := '0';  -- combinational request from comb_proc
@@ -91,9 +96,11 @@ architecture RTL of exponentiation_controller is
     signal NW_next     : integer range 0 to (2**window_size - 1) := 0;
     signal window_type : integer range 0 to 1 := 0;  -- 0: zero window, 1: non-zero window
     signal window_type_next : integer range 0 to 1 := 0;
+    
     -- MSB scan (run concurrently with PRECOMPUTE)
     signal msb_ptr        : integer range 0 to C_block_size-1 := C_block_size-1;
     signal msb_found      : std_logic := '0';
+    signal msb_has_one    : std_logic := '0';
     signal msb_scan_active: std_logic := '0';
     signal msb_scan_request: std_logic := '0';
     signal wait_mem_ctr    : integer range 0 to 1 := 0;
@@ -101,12 +108,18 @@ architecture RTL of exponentiation_controller is
     signal exp_init_done_sig : std_logic := '0';
     signal exp_init_done_next : std_logic := '0';
 
+    -- Exponentiation done signal
+    signal exp_done : std_logic := '0';
+    signal exp_done_next : std_logic := '0';
+
     -- Handshake internal
     signal data_accept : std_logic := '0'; -- asserted when start AND ready_in
 
     -- Square counter used when performing repeated squarings
     signal square_count : integer range 0 to C_block_size-1 := 0;
     signal square_count_next : integer range 0 to C_block_size-1 := 0;
+    -- Fast-path flag to indicate NW==1 (use base directly instead of BRAM read)
+    signal precomp_fastpath : std_logic := '0';
 begin
 
 
@@ -129,7 +142,9 @@ begin
         mont_enable_pulse <= '0';
         mont_running <= '0';
         -- Memory wait counter
+        exp_init_done_sig <= '0';
         wait_mem_ctr <= 0;
+        exp_done <= '0';
     elsif rising_edge(clk) then
         state <= next_state;
 
@@ -139,8 +154,10 @@ begin
         window_type <= window_type_next;
         -- Update other registered values from their next-state drivers
         precomp_index <= precomp_index_next;
+        precomp_first_done <= precomp_first_done_next;
         exp_init_done_sig <= exp_init_done_next;
         square_count <= square_count_next;
+    exp_done <= exp_done_next;
 
         -- Generate one-cycle start pulse for Montgomery core when requested
         mont_enable_pulse <= '0';
@@ -167,9 +184,15 @@ begin
             P_reg <= montgomery_S;
         end if;
 
-        -- Update C after Montgomery multiplication completes during PRECOMPUTE
+        -- Update C or base_sq after Montgomery multiplication completes during PRECOMPUTE
         if montgomery_done = '1' and state = PRECOMPUTE then
-            C_reg <= montgomery_S;
+            if precomp_first_done = '0' then
+                -- first result is base^2; store it in base_sq_reg and mark done via comb_proc
+                base_sq_reg <= montgomery_S;
+            else
+                -- subsequent results are odd powers; keep in C_reg as last_odd
+                C_reg <= montgomery_S;
+            end if;
         end if;
 
         -- Update P after Montgomery multiplication completes during WINDOW_WAIT_MONT
@@ -186,7 +209,12 @@ begin
 
         -- Sample BRAM read data into C_reg when in WINDOW_WAIT_MEM
         if state = WINDOW_WAIT_MEM then
-            C_reg <= precomp_dout;
+            if precomp_fastpath = '1' then
+                -- NW == 1: use base (P_reg) directly as the multiplicand
+                C_reg <= R_mod_n;
+            else
+                C_reg <= precomp_dout;
+            end if;
         end if;
 
         -- Wait-counter after a memory write (state WAIT_MEM_WRITE)
@@ -211,22 +239,27 @@ begin
     if reset_n = '0' then
         msb_ptr <= C_block_size - 1;
         msb_found <= '0';
+        msb_has_one <= '0';
         msb_scan_active <= '0';
     elsif rising_edge(clk) then
         -- Initialize MSB scan when requested by comb_proc
         if msb_scan_request = '1' then
             msb_ptr <= C_block_size - 1;
             msb_found <= '0';
+            msb_has_one <= '0';
             msb_scan_active <= '1';
         elsif msb_scan_active = '1' and msb_found = '0' then
             -- Walk down the key bits until we find a '1' or reach bit 0
             if key(msb_ptr) = '1' then
                 msb_found <= '1';
+                msb_has_one <= '1';
             else
                 if msb_ptr > 0 then
                     msb_ptr <= msb_ptr - 1;
                 else
                     msb_found <= '1';
+                    -- reached bit 0 and didn't see a '1'
+                    msb_has_one <= '0';
                 end if;
             end if;
         end if;
@@ -235,6 +268,7 @@ end process msb_scan_proc;
 
 comb_proc : process(all)
     variable start_idx : integer;
+    variable window_val : integer;
 begin
     -- Initialize variable to avoid latch
     start_idx := 0;
@@ -258,6 +292,7 @@ begin
     result <= P_reg;
     -- Default next-state values (keep current)
     precomp_index_next <= precomp_index;
+    precomp_first_done_next <= precomp_first_done;
     exp_init_done_next <= exp_init_done_sig;
     square_count_next <= square_count;
     -- default handshake signals
@@ -274,6 +309,8 @@ begin
             montgomery_N <= (others => '0');
             montgomery_enable <= '0';
             precomp_we <= '0';
+            exp_done_next <= '0';
+            exp_init_done_next <= '0';
             precomp_addr <= (others => '0');
             precomp_din <= (others => '0');
             -- keep result following P_reg and default next-state values
@@ -283,7 +320,8 @@ begin
                 -- Start an MSB scan for the incoming key/message so each test re-searches
                 msb_scan_request <= '1';
                 next_state <= CONV_2_MONT;
-                precomp_index_next <= 2; -- initialize precompute index on start
+                precomp_index_next <= 0; -- initialize precompute index on start (we'll write odd powers starting at index 0 -> exponent 3)
+                precomp_first_done_next <= '0';
             end if;
         when CONV_2_MONT =>
             if montgomery_done = '1' then
@@ -293,13 +331,37 @@ begin
             mont_request <= '1';
 
         when PRECOMPUTE =>
-            -- Request Montgomery to compute C_reg * P_reg mod N
-            mont_request <= '1';
-            montgomery_A <= C_reg;
-            montgomery_B <= P_reg;
+            -- PRECOMPUTE operand selection strategy:
+            -- 1) First multiply: compute base^2 = C_reg * P_reg (this is done right after CONV_2_MONT)
+            -- 2) Next: compute base^3 = base_sq_reg * P_reg
+            -- 3) Afterwards: compute next_odd = C_reg * base_sq_reg (chain using last odd in C_reg)
+            if precomp_first_done = '0' then
+                -- compute base^2
+                mont_request <= '1';
+                montgomery_A <= C_reg;
+                montgomery_B <= P_reg;
+            else
+                if precomp_index = 0 then
+                    -- compute base^3 = base_sq_reg * base
+                    mont_request <= '1';
+                    montgomery_A <= base_sq_reg;
+                    montgomery_B <= P_reg;
+                else
+                    -- compute next_odd = last_odd * base_sq_reg
+                    mont_request <= '1';
+                    montgomery_A <= C_reg;
+                    montgomery_B <= base_sq_reg;
+                end if;
+            end if;
             -- when the core completes, move to WAIT_MEM_WRITE to perform the BRAM write
             if montgomery_done = '1' then
-                next_state <= WAIT_MEM_WRITE;
+                if precomp_first_done = '0' and precomp_index = 0 then
+                    -- first result base^2 saved in seq proc; stay in PRECOMPUTE to compute base^3
+                    precomp_first_done_next <= '1';
+                    next_state <= PRECOMPUTE;
+                else
+                    next_state <= WAIT_MEM_WRITE;
+                end if;
             end if;
             -- request MSB scan while precompute is running (sequential proc will initialize)
             if msb_scan_active = '0' and msb_found = '0' then
@@ -316,60 +378,90 @@ begin
                 next_state <= WAIT_MEM_WRITE;
             else
                 -- second cycle: decide next state
-                if precomp_index >= (2**window_size - 1) and msb_found = '1' then
+                -- Compute the exponent corresponding to current precomp_index: exp = 2*precomp_index + 3
+                if (2 * precomp_index + 3) >= (2**window_size - 1) and msb_found = '1' then
+                    -- we've written up to the maximum odd exponent; proceed to exponentiation
                     next_state <= EXP_INIT;
                 else
                     next_state <= PRECOMPUTE;
                 end if;
-                -- On the second cycle, advance precompute index
-                if precomp_index < (2**window_size - 1) then
+                -- On the second cycle, advance precompute index if more entries remain
+                if (2 * precomp_index + 3) < (2**window_size - 1) then
                     precomp_index_next <= precomp_index + 1;
                 else
                     precomp_index_next <= precomp_index;
                 end if;
             end if;
         when EXP_INIT =>
-        -- Initialize exponentiation process by reading the first window from MSB index
-            -- set initial MSB_index from the msb_ptr found by the concurrent scan
-            MSB_index_next <= msb_ptr;
+            -- Initialize exponentiation process by reading the first window from MSB index
             -- prepare first window safely (handle truncated top window)
-            start_idx := msb_ptr - window_size;
+            start_idx := msb_ptr - window_size + 1;
             if start_idx < 0 then
                 start_idx := 0;
+                exp_done_next <= '1';
             end if;
-            NW_next <= to_integer(unsigned(key(msb_ptr downto start_idx )));
+            -- Extract window and shrink until odd so we only need odd precomputations
+            window_val := to_integer(unsigned(key(msb_ptr downto start_idx)));
+            while (window_val mod 2 = 0) and (start_idx < msb_ptr) loop
+                start_idx := start_idx + 1;
+                window_val := to_integer(unsigned(key(msb_ptr downto start_idx)));
+            end loop;
+            NW_next <= window_val;
             -- msb_scan_proc will clear active when done; nothing for comb to drive here
             next_state  <= WINDOW_READ_MEM;
+            if start_idx /= 0 then
+                MSB_index_next <= start_idx - 1;
+            else
+                MSB_index_next <= start_idx;
+            end if;
 
         when WINDOW_SCAN =>
             -- mark that EXP_INIT window was read (one-shot)
             exp_init_done_next <= '1';
             -- Scan for next Non-zero window in exponent
-            if MSB_index = 0 then
+            if MSB_index = 0 and exp_done = '1' then
                 next_state <= CONV_2_NORMAL;
             else
-                if key(MSB_index - 1) = '0' then
+                if key(MSB_index) = '0' then
                     window_type_next <= 0;  -- Zero window
                     MSB_index_next <= MSB_index - 1;
                     next_state <= WINDOW_SQUARE_START;
                 else
                     window_type_next <= 1;  -- Non-zero window
                     -- compute safe start index for this window
-                    start_idx := MSB_index - window_size;
+                    start_idx := MSB_index - window_size + 1;
                     if start_idx < 0 then
                         start_idx := 0;
+                        exp_done_next <= '1';
                     end if;
 
-                    NW_next <= to_integer(unsigned(key(MSB_index downto start_idx )));
+                    -- Extract window and shrink until odd so we index only odd precomputations
+                    window_val := to_integer(unsigned(key(MSB_index downto start_idx )));
+                    while (window_val mod 2 = 0) and (start_idx < MSB_index) loop
+                        start_idx := start_idx + 1;
+                        window_val := to_integer(unsigned(key(MSB_index downto start_idx )));
+                    end loop;
 
+                    NW_next <= window_val;
+                    square_count_next <= MSB_index - start_idx;  -- number of bits processed in this window
                     next_state <= WINDOW_READ_MEM;
                 end if;
             end if;
 
         when WINDOW_READ_MEM =>
-            MSB_index_next <= start_idx;
             -- Read precomputed value from memory for current window NW
-            precomp_addr <= std_logic_vector(to_unsigned(NW, precomp_addr'length));
+            -- Precompute memory stores only odd powers starting at exponent 3: mapping is
+            -- index = (NW - 3) / 2 for NW >= 3. For NW == 1, we use fast-path (no BRAM read)
+            if NW = 1 then
+                precomp_addr <= (others => '0');
+                precomp_fastpath <= '1';
+            elsif NW >= 3 then
+                precomp_addr <= std_logic_vector(to_unsigned((NW - 3) / 2, precomp_addr'length));
+                precomp_fastpath <= '0';
+            else
+                precomp_addr <= (others => '0');
+                precomp_fastpath <= '0';
+            end if;
             next_state <= WINDOW_WAIT_MEM;
 
         when WINDOW_WAIT_MEM =>
@@ -378,8 +470,6 @@ begin
             -- directly to WINDOW_SCAN (we already used this precompute to set P_reg).
             if exp_init_done_sig = '1' then
                 next_state <= WINDOW_SQUARE_START;
-                -- clear the one-shot after observing it
-                exp_init_done_next <= '0';
             else
                 -- precomp_dout is sampled synchronously in the sequential process when
                 -- state = WINDOW_WAIT_MEM (so one cycle is available). Proceed to
@@ -399,7 +489,6 @@ begin
                 mont_request <= '1';
                 montgomery_A <= P_reg;
                 montgomery_B <= P_reg;
-                square_count_next <= window_size;
             end if;
             next_state <= WINDOW_WAIT_MONT;
 

@@ -71,8 +71,8 @@ begin
         valid_out => valid_out,
         result    => result,
         modulus   => modulus,
-        R_mod_n   => R_mod_n_tb,
-        R_squared => R_squared_tb,
+    R_mod_n   => R_mod_n_tb,
+    R_squared_mod_n => R_squared_tb,
         clk       => clk,
         reset_n   => reset_n
     );

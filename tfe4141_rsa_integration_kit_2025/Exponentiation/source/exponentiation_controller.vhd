@@ -112,6 +112,14 @@ architecture RTL of exponentiation_controller is
     signal exp_done : std_logic := '0';
     signal exp_done_next : std_logic := '0';
 
+    -- CLNW scanner interface signals (moved to separate component)
+    signal CLNW_scan_request : std_logic := '0';
+    signal CLNW_scan_active  : std_logic := '0';
+    signal CLNW_found        : std_logic := '0';
+    signal window_LSB        : integer := 0;
+    signal window_MSB        : integer := 0;
+    signal zero_window_count : integer := 0;
+
     -- Handshake internal
     signal data_accept : std_logic := '0'; -- asserted when start AND ready_in
 
@@ -265,6 +273,26 @@ begin
         end if;
     end if;
 end process msb_scan_proc;
+
+-- Instantiate CLNW scanner component (moved to clnw_scanner.vhd)
+clnw_inst : entity work.clnw_scanner
+    generic map (
+        C_block_size => C_block_size,
+        window_size  => window_size
+    )
+    port map (
+        clk => clk,
+        reset_n => reset_n,
+        key => key,
+        CLNW_scan_request => CLNW_scan_request,
+        CLNW_scan_active  => CLNW_scan_active,
+        CLNW_found        => CLNW_found,
+        window_LSB        => window_LSB,
+        window_MSB        => window_MSB,
+        zero_window_count => zero_window_count,
+        window_type       => window_type
+    );
+
 
 comb_proc : process(all)
     variable start_idx : integer;

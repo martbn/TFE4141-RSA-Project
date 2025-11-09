@@ -46,7 +46,6 @@ end exponentiation_controller;
 
 architecture RTL of exponentiation_controller is
 
-    -- R_mod_n and R_squared_mod_n are provided as inputs to the controller
 
     -- State machine states
     type state_type is (
@@ -367,9 +366,10 @@ begin
     case state is
         when IDLE =>
             -- ===== IDLE: Wait for start signal and advertise ready =====
-
+            -- Assert ready unconditionally in IDLE to signal we can accept data
+            ready_in <= '1';
+            
             if start = '1' then
-                ready_in <= '1';
                 data_accept <= '1';
                 msb_scan_request <= '1';  -- Start MSB scan for incoming key
                 next_state <= CONV_2_MONT;
@@ -567,11 +567,9 @@ begin
 
         when FINISHED =>
             -- ===== FINISHED: Assert done and return to IDLE =====
+            -- Assert done immediately to signal valid data (fixes deadlock)
+            done <= '1';
             if ready_out = '1' then
-                done <= '1';
-                exp_done_next <= '1';
-            elsif exp_done = '1' then
-                exp_done_next <= '0';
                 next_state <= IDLE;
             end if;
     end case;

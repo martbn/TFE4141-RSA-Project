@@ -59,7 +59,8 @@ architecture RTL of exponentiation_controller is
         WINDOW_SQUARE_START,    -- Start squaring sequence for window
         WINDOW_MULT_START,      -- Multiply by precomputed window value
         CONV_2_NORMAL,          -- Convert from Montgomery domain (result * 1)
-        FINISHED               -- Assert done signal, return to IDLE
+        FINISHED,               -- Assert done signal, return to IDLE
+        OUTPUTDONE              -- Wait for consumer to accept result
     );
     signal state, next_state : state_type := IDLE;
 
@@ -99,8 +100,7 @@ architecture RTL of exponentiation_controller is
     signal wait_mem_ctr    : integer range 0 to 1 := 0;
 
     -- Exponentiation done signal
-    signal exp_done : std_logic := '0';
-    signal exp_done_next : std_logic := '0';
+    signal need_input : std_logic := '0';
 
     -- CLNW scanner interface signals (moved to separate component)
     signal CLNW_scan_request : std_logic := '0';
@@ -142,7 +142,6 @@ begin
         mont_running <= '0';
         -- Memory wait counter
         wait_mem_ctr <= 0;
-        exp_done <= '0';
         init_window_done <= '0';
         -- Ensure these control flags/registers have async reset to avoid inferred flops
         precomp_base1_written <= '0';
@@ -165,7 +164,6 @@ begin
         precomp_first_done <= precomp_first_done_next;
         precomp_base1_written <= precomp_base1_written_next;
         square_count <= square_count_next;
-        exp_done <= exp_done_next;
         -- Update init_window_done from its next-state driver
         init_window_done <= init_window_done_next;
 
@@ -182,7 +180,7 @@ begin
         end if;
         
         -- Initialize C and P on data accept (synchronous load)
-        if state = IDLE and data_accept = '1' then
+        if state = CONV_2_MONT  then
             C_reg <= R_squared_mod_n;
             P_reg <= message;
             -- precomp_index is driven by precomp_index_next (set in comb_proc)
@@ -317,7 +315,6 @@ begin
     precomp_first_done_next <= precomp_first_done;
     precomp_base1_written_next <= precomp_base1_written;
     square_count_next <= square_count;
-    exp_done_next <= exp_done;
     init_window_done_next <= init_window_done;
     window_type_next <= window_type;
     
@@ -367,8 +364,7 @@ begin
         when IDLE =>
             -- ===== IDLE: Wait for start signal and advertise ready =====
             -- Assert ready unconditionally in IDLE to signal we can accept data
-            ready_in <= '1';
-            
+
             if start = '1' then
                 data_accept <= '1';
                 msb_scan_request <= '1';  -- Start MSB scan for incoming key
@@ -569,7 +565,14 @@ begin
             -- ===== FINISHED: Assert done and return to IDLE =====
             -- Assert done immediately to signal valid data (fixes deadlock)
             done <= '1';
+            need_input <= '1';
             if ready_out = '1' then
+                ready_in <= '1';
+                next_state <= OUTPUTDONE;
+            end if;
+        when OUTPUTDONE =>
+            -- ===== OUTPUTDONE: Wait for consumer to accept result =====
+            if start = '1' then
                 next_state <= IDLE;
             end if;
     end case;

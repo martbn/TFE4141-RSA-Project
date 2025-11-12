@@ -21,7 +21,6 @@ architecture behavior of exponentiation_tb is
     signal valid_out : std_logic;
     signal result    : std_logic_vector(C_block_size-1 downto 0);
     signal modulus   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
-    signal R_mod_n_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal R_squared_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     -- expected results for small test vectors (padded to 256 bits)
     -- Test A: n=53, m=10, e=7 => m^e mod n = 13 (0x0D)
@@ -78,7 +77,6 @@ begin
         valid_out => valid_out,
         result    => result,
         modulus   => modulus,
-        R_mod_n   => R_mod_n_tb,
         R_squared_mod_n => R_squared_tb,
         clk       => clk,
         reset_n   => reset_n
@@ -105,7 +103,6 @@ begin
     key <= x"0000000000000000000000000000000000000000000000000000000000000007"; -- 7
     -- Use R = 2^256 (montgomery core WIDTH = 256). For n=53:
     -- R mod n = 2^256 mod 53 = 10 (0x0A), R^2 mod n = 10^2 mod 53 = 47 (0x2F)
-    R_mod_n_tb <= x"000000000000000000000000000000000000000000000000000000000000000A";
     R_squared_tb <= x"000000000000000000000000000000000000000000000000000000000000002F";
 
     wait for 20 ns;
@@ -164,7 +161,6 @@ begin
     message <= x"00000000000000000000000000000000000000000000000000000000DEADBEEF"; -- 0xDEADBEEF
     key <= x"0000000000000000000000000000000000000000000000000000000000010001"; -- 65537
     -- R = 2^256 mod 65537 = 1, R^2 mod n = 1
-    R_mod_n_tb <= x"0000000000000000000000000000000000000000000000000000000000000001";
     R_squared_tb <= x"0000000000000000000000000000000000000000000000000000000000000001";
 
     wait for 20 ns;
@@ -226,7 +222,6 @@ begin
     key <= x"0000000000000000000000000000000000000000000000000000000000000011"; -- 17
     -- Use R = 2^256 (montgomery core WIDTH = 256). For n=101:
     -- R mod n = 2^256 mod 101 = 37 (0x25), R^2 mod n = 37^2 mod 101 = 56 (0x38)
-    R_mod_n_tb <= x"0000000000000000000000000000000000000000000000000000000000000025";
     R_squared_tb <= x"0000000000000000000000000000000000000000000000000000000000000038";
 
     wait for 20 ns;
@@ -289,7 +284,6 @@ begin
     -- Public exponent KEY E (common 0x10001)
     key <= x"0000000000000000000000000000000000000000000000000000000000010001";
     -- Computed R_mod_n and R_squared_mod_n for this modulus
-    R_mod_n_tb <= x"666DAE8C529A9798EAC7A157FF32D7EDFD77038F56436722B36F298907008973";
     R_squared_tb <= x"56DDF8B43061AD3DBCD1757244D1A19E2E8C849DDE4817E55BB29D1C20C06364";
     wait for 20 ns;
 
@@ -352,7 +346,6 @@ begin
     message <= x"2323232323232323232323232323232323232323232323232323232323232323";
     key <= x"0CEA1651EF44BE1F1F1476B7539BED10D73E3AAC782BD9999A1E5A790932BFE9";
     -- same R constants as Test C
-    R_mod_n_tb <= x"666DAE8C529A9798EAC7A157FF32D7EDFD77038F56436722B36F298907008973";
     R_squared_tb <= x"56DDF8B43061AD3DBCD1757244D1A19E2E8C849DDE4817E55BB29D1C20C06364";
     wait for 20 ns;
 

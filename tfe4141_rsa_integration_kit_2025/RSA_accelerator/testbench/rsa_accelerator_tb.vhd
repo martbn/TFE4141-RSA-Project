@@ -64,7 +64,6 @@ architecture struct of rsa_accelerator_tb is
 	signal key_e_d         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal key_n           : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal R_squared_mod_n : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-	signal R_mod_n         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal rsa_status      : std_logic_vector(31 downto 0);
 
 	-----------------------------------------------------------------------------
@@ -207,8 +206,7 @@ architecture struct of rsa_accelerator_tb is
 	procedure read_keys_and_command(
 		signal kn              : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		signal ked             : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		signal krsq            : out std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		signal kr              : out std_logic_vector(C_BLOCK_SIZE-1 downto 0)
+		signal krsq            : out std_logic_vector(C_BLOCK_SIZE-1 downto 0)
 	)is
 		variable line_from_file  : line;
 		variable s1              : string(1 downto 1);
@@ -379,7 +377,6 @@ begin
 			tc_ctrl_state          <= e_TC_START_TC;
 			key_n                  <= (others => '0');
 			R_squared_mod_n        <= (others => '0');
-			R_mod_n                <= (others => '0');
 			key_e_d                <= (others => '0');
 			test_case_id           <= 0;
 			start_tc               <= '0';
@@ -401,7 +398,7 @@ begin
 					tc_ctrl_state <= e_TC_RUN_TC;
 					open_tc_inp(test_case_id);
 					open_tc_otp(test_case_id);
-					read_keys_and_command(key_n, key_e_d, R_squared_mod_n, R_mod_n);
+					read_keys_and_command(key_n, key_e_d, R_squared_mod_n);
 					start_tc      <= '1';
 
 				-- Run the testcase
@@ -645,9 +642,7 @@ u_rsa_core : entity work.rsa_core
 		key_e_d                => key_e_d,
 		key_n                  => key_n,
 		rsa_status             => rsa_status,
-		R_squared_mod_n        => R_squared_mod_n,
-		R_mod_n                => R_mod_n
-
+		R_squared_mod_n        => R_squared_mod_n
 	);
 
 

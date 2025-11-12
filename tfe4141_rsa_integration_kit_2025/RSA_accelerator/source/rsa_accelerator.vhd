@@ -101,7 +101,6 @@ architecture rtl of rsa_accelerator is
 	signal key_e_d         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal key_n           : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal R_squared_mod_n : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-	signal R_mod_n         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal rsa_status      : std_logic_vector(31 downto 0);
 
 begin
@@ -117,7 +116,6 @@ u_rsa_regio : entity work.rsa_regio
 
 		-- User ports
 		R_squared_mod_n       => R_squared_mod_n,
-		R_mod_n               => R_mod_n,
 
 		key_e_d                 => key_e_d,
 		key_n                   => key_n,
@@ -226,8 +224,7 @@ u_rsa_core : entity work.rsa_core
 		key_e_d                => key_e_d,
 		key_n                  => key_n,
 		rsa_status             => rsa_status,
-		R_squared_mod_n        => R_squared_mod_n,
-		R_mod_n                => R_mod_n
+		R_squared_mod_n        => R_squared_mod_n
 
 	);
 

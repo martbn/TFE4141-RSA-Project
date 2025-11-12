@@ -2201,7 +2201,7 @@
             "vlnv": "xilinx.com:interface:aximm_rtl:1.0",
             "parameters": {
               "MAX_BURST_LENGTH": {
-                "value": "8"
+                "value": "16"
               },
               "NUM_READ_OUTSTANDING": {
                 "value": "16"

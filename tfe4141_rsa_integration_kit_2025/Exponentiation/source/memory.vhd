@@ -30,23 +30,27 @@ architecture rtl of memory is
 	constant TOTAL_WIDTH : integer := BRAM_WIDTH * BRAM_BANKS;
 	constant NUM_WORDS   : integer := 2**WINDOW_SIZE-1;
 	-- internal busses sized to TOTAL_WIDTH (288)
-	signal DI_bus : std_logic_vector(TOTAL_WIDTH-1 downto 0);
-	signal DO_bus : std_logic_vector(TOTAL_WIDTH-1 downto 0);
+	-- Initialize DI_bus/DO_bus to avoid undefined bits at simulation start
+	signal DI_bus : std_logic_vector(TOTAL_WIDTH-1 downto 0) := (others => '0');
+	signal DO_bus : std_logic_vector(TOTAL_WIDTH-1 downto 0) := (others => '0');
 
 	-- BRAM expects a wider address (for 72-bit width on 36Kb BRAM address is 9 bits)
-	signal ADDR_ext : std_logic_vector(8 downto 0);
+	-- Initialize to zeros so extended address bits are defined at simulation start
+	signal ADDR_ext : std_logic_vector(8 downto 0) := (others => '0');
 	signal WE_vec  : std_logic_vector(7 downto 0);
 begin
 
 	-- extend the user address to the BRAM address width; upper bits are zeros
-	ADDR_ext <= std_logic_vector(resize(unsigned(addr), 9));
+	-- Resize to the actual width of ADDR_ext to avoid hard-coded sizes and runtime mismatch
+	ADDR_ext <= std_logic_vector(resize(unsigned(addr), ADDR_ext'length));
 	
 
 	-- expand single-bit write enable to the BRAM byte-enable width (8 bits for 72-bit mode)
 	WE_vec <= (others => '1') when we = '1' else (others => '0');
 
 	-- pack the user data into DI_bus (lower DATA_WIDTH bits valid, rest zero)
-	DI_bus <= std_logic_vector(resize(unsigned(din), TOTAL_WIDTH));
+	-- Explicitly zero-extend the upper bits so they are always '0' (prevent unset bits)
+	DI_bus <= (TOTAL_WIDTH - DATA_WIDTH - 1 downto 0 => '0') & din;
 
 	-- Concatenate DO outputs, then present the lower DATA_WIDTH bits as dout
 	dout <= DO_bus(DATA_WIDTH-1 downto 0);

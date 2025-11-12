@@ -22,7 +22,6 @@ entity exponentiation_controller is
         message       : in  std_logic_vector(C_block_size-1 downto 0);
         key           : in  std_logic_vector(C_block_size-1 downto 0);
         modulus       : in  std_logic_vector(C_block_size-1 downto 0);
-        R_mod_n       : in  std_logic_vector(C_block_size-1 downto 0);
         R_squared_mod_n     : in  std_logic_vector(C_block_size-1 downto 0);
         result        : out std_logic_vector(C_block_size-1 downto 0);
 
@@ -50,6 +49,7 @@ architecture RTL of exponentiation_controller is
     -- State machine states
     type state_type is (
         IDLE,                   -- Wait for start signal, advertise ready
+        LOAD_DATA,              -- Load message, key, modulus into registers
         CONV_2_MONT,            -- Convert message to Montgomery domain (R**2 * M)
         PRECOMPUTE,             -- Compute odd powers: base**2, base**3, base**5, ... base**(2**(w-1))
         WAIT_MEM_WRITE,         -- 2-cycle BRAM write latency for precomputed values
@@ -59,8 +59,7 @@ architecture RTL of exponentiation_controller is
         WINDOW_SQUARE_START,    -- Start squaring sequence for window
         WINDOW_MULT_START,      -- Multiply by precomputed window value
         CONV_2_NORMAL,          -- Convert from Montgomery domain (result * 1)
-        FINISHED,               -- Assert done signal, return to IDLE
-        OUTPUTDONE              -- Wait for consumer to accept result
+        FINISHED               -- Assert done signal, return to IDLE
     );
     signal state, next_state : state_type := IDLE;
 
@@ -74,6 +73,8 @@ architecture RTL of exponentiation_controller is
     -- Internal C and P registers
     signal C_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal P_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
+    -- Registered result to hold final output stable during handshake
+    signal result_reg : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
 
     -- Montgomery start/pulse
     signal mont_request       : std_logic := '0';  -- combinational request from comb_proc
@@ -83,8 +84,8 @@ architecture RTL of exponentiation_controller is
     -- CLNW signals
     signal init_window_done : std_logic := '0';
     signal init_window_done_next : std_logic := '0';
-    signal MSB_index   : integer range 0 to C_block_size-1       := 0;
-    signal MSB_index_next : integer range 0 to C_block_size-1  := 0;
+    signal MSB_index   : integer range -1 to C_block_size-1       := 0;
+    signal MSB_index_next : integer range -1 to C_block_size-1  := 0;
     signal exp_counter : integer range 0 to C_block_size-1       := 0;
     signal NW          : integer range 0 to (2**window_size - 1) := 0;
     signal NW_next     : integer range 0 to (2**window_size - 1) := 0;
@@ -99,9 +100,6 @@ architecture RTL of exponentiation_controller is
     signal msb_scan_request: std_logic := '0';
     signal wait_mem_ctr    : integer range 0 to 1 := 0;
 
-    -- Exponentiation done signal
-    signal need_input : std_logic := '0';
-
     -- CLNW scanner interface signals (moved to separate component)
     signal CLNW_scan_request : std_logic := '0';
     signal CLNW_scan_request_next : std_logic := '0';
@@ -111,9 +109,6 @@ architecture RTL of exponentiation_controller is
     signal zero_window_count : integer := 0;
     -- CLNW scanner window type (single-driver from clnw_scanner)
     signal clnw_window_type  : integer := 0;
-
-    -- Handshake internal
-    signal data_accept : std_logic := '0'; -- asserted when start AND ready_in
 
     -- Square counter used when performing repeated squarings
     signal square_count : integer range 0 to C_block_size-1 := 0;
@@ -134,6 +129,7 @@ begin
         precomp_index <= 0;
         C_reg <= (others => '0');
         P_reg <= (others => '0');
+        result_reg <= (others => '0');
         MSB_index <= 0;
         NW <= 0;
         square_count <= 0;
@@ -211,6 +207,11 @@ begin
         -- Update P after Montgomery multiplication completes during WINDOW_SQUARE_START or WINDOW_MULT_START
         if montgomery_done = '1' and (state = WINDOW_SQUARE_START or state = WINDOW_MULT_START) then
             P_reg <= montgomery_S;
+        end if;
+
+        -- Capture final result when conversion to normal completes (keep stable during FINISHED)
+        if montgomery_done = '1' and state = CONV_2_NORMAL then
+            result_reg <= montgomery_S;
         end if;
 
         -- Sample BRAM read data into P_reg when in WINDOW_WAIT_MEM
@@ -321,7 +322,6 @@ begin
     -- Default: all control request signals deasserted
     mont_request <= '0';
     msb_scan_request <= '0';
-    data_accept <= '0';
 
     -- Default: CLNW scanner control (registered pulse driven from _next)
     CLNW_scan_request_next <= '0';
@@ -355,7 +355,7 @@ begin
     precomp_din <= (others => '0');
     
     -- Default: Result output follows P_reg
-    result <= montgomery_S;
+    result <= result_reg;
     
     -- ========================================================================
     -- STATE-SPECIFIC LOGIC AND NEXT-STATE COMPUTATION
@@ -364,18 +364,21 @@ begin
         when IDLE =>
             -- ===== IDLE: Wait for start signal and advertise ready =====
             -- Assert ready unconditionally in IDLE to signal we can accept data
-
+            result <= (others => '0');
             if start = '1' then
-                data_accept <= '1';
                 msb_scan_request <= '1';  -- Start MSB scan for incoming key
-                next_state <= CONV_2_MONT;
+                next_state <= LOAD_DATA;
                 precomp_index_next <= 0;
                 precomp_first_done_next <= '0';
                 init_window_done_next <= '0';
                 precomp_base1_written_next <= '0';
                 MSB_index_next <= C_block_size - 1;  -- Initialize MSB index to max
-                
             end if;
+        when LOAD_DATA =>
+            ready_in <= '1';
+            -- ===== LOAD_DATA: Load message, key, modulus into registers =====
+            -- Handled in sequential process on data_accept signal
+            next_state <= CONV_2_MONT;
             
         when CONV_2_MONT =>
             -- ===== CONV_2_MONT: Convert message to Montgomery domain =====
@@ -468,29 +471,25 @@ begin
 
         when WINDOW_SCAN =>
             -- ===== WINDOW_SCAN: Determine next window type (zero/non-zero) =====
-                window_type_next <= clnw_window_type;
-            if(CLNW_found = '1') then
+            window_type_next <= clnw_window_type;
+            -- If MSB_index is negative we've processed the entire exponent; go convert to normal
+            if MSB_index < 0 then
+                next_state <= CONV_2_NORMAL;
+            elsif (CLNW_found = '1') then
                 -- Capture window type from CLNW scanner into registered next value
-                if MSB_index < 0 then
-                    -- Reached end of exponent; convert result to normal domain
-
-                    next_state <= CONV_2_NORMAL;
+                CLNW_scan_request_next <= '1';  -- Start CLNW scan for next window (one-cycle pulse)
+                if clnw_window_type = 0 then
+                    -- Zero window: Prepare for squaring
+                    next_state <= WINDOW_SQUARE_START;
+                    -- Advance the MSB index (processing pointer for exponent)
+                    MSB_index_next <= MSB_index - zero_window_count;
+                    square_count_next <= zero_window_count;
                 else
-                    CLNW_scan_request_next <= '1';  -- Start CLNW scan for next window (one-cycle pulse)
-                    if clnw_window_type = 0 then
-                        -- Zero window: Prepare for squaring
-                        next_state <= WINDOW_SQUARE_START;
-                        -- Advance the MSB index (processing pointer for exponent)
-                        MSB_index_next <= MSB_index - zero_window_count;
-                        square_count_next <= zero_window_count;
-
-                    else
-                        -- Non-zero window: Process multi-bit window
-                        NW_next <= to_integer(unsigned(key(window_MSB downto window_LSB)));
-                        MSB_index_next <= window_LSB - 1;
-                        next_state <= WINDOW_READ_MEM;
-                        square_count_next <= window_size;
-                    end if;
+                    -- Non-zero window: Process multi-bit window
+                    NW_next <= to_integer(resize(unsigned(key(window_MSB downto window_LSB)), window_size));
+                    MSB_index_next <= window_LSB - 1;
+                    next_state <= WINDOW_READ_MEM;
+                    square_count_next <= window_size;
                 end if;
             end if;
 
@@ -565,14 +564,7 @@ begin
             -- ===== FINISHED: Assert done and return to IDLE =====
             -- Assert done immediately to signal valid data (fixes deadlock)
             done <= '1';
-            need_input <= '1';
             if ready_out = '1' then
-                ready_in <= '1';
-                next_state <= OUTPUTDONE;
-            end if;
-        when OUTPUTDONE =>
-            -- ===== OUTPUTDONE: Wait for consumer to accept result =====
-            if start = '1' then
                 next_state <= IDLE;
             end if;
     end case;

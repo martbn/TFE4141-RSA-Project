@@ -62,9 +62,9 @@ begin
 
         -- TEST 1: A=3, B=5, N=7
         report "--- Starting Test 1 ---";
-        A <= std_logic_vector(to_unsigned(3, WIDTH));
-        B <= std_logic_vector(to_unsigned(5, WIDTH));
-        N <= std_logic_vector(to_unsigned(7, WIDTH));
+        A <= std_logic_vector(to_unsigned(81, WIDTH));
+        B <= std_logic_vector(to_unsigned(14, WIDTH));
+        N <= std_logic_vector(to_unsigned(23, WIDTH));
         wait for 10 ns;
 
         -- pulse enable to start

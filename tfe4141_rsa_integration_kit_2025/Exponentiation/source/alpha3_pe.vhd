@@ -9,6 +9,7 @@ entity alpha3_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     a_word      : in  unsigned(WORD_WIDTH-1 downto 0);
     b_word      : in  unsigned(WORD_WIDTH-1 downto 0);
     s1_gf_out    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -66,7 +67,7 @@ architecture behavior of alpha3_pe is
     );
 
   -- Connect internal signals to output ports
-  s_a3_out <= t_out;
-  c_a3_out <= c_internal;
+  s_a3_out <= t_out when activate_module = '1' else (others => '0');
+  c_a3_out <= c_internal when activate_module = '1' else (others => '0');
 
 end architecture behavior;

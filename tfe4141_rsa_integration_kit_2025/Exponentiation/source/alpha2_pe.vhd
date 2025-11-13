@@ -9,6 +9,7 @@ entity alpha2_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     a_word      : in  unsigned(WORD_WIDTH-1 downto 0);
     b_word      : in  unsigned(WORD_WIDTH-1 downto 0);
     s_g2_out    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -65,8 +66,8 @@ begin
       c_out   => c_internal
     );
   
-  -- Connect internal signals to output ports
-  s_a2_out <= t_out;
-  c_a2_out <= c_internal;
+  -- Connect internal signals to output ports with activation check
+  s_a2_out <= t_out when activate_module = '1' else (others => '0');
+  c_a2_out <= c_internal when activate_module = '1' else (others => '0');
 
 end architecture behavior;

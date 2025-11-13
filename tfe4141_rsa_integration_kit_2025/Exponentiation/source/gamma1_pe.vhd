@@ -9,6 +9,7 @@ entity gamma1_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     m     : in  unsigned(WORD_WIDTH-1 downto 0);
     p_i      : in  unsigned(WORD_WIDTH-1 downto 0);
     s_g1_in    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -38,8 +39,8 @@ begin
       c_out   => c_out
     );
 
-  -- Connect internal signals to output ports
-  s_g1_out <= t_out;
-  c_g1_out <= c_out;
+  -- Output the results directly (no activation gating)
+  s_g1_out <= t_out when activate_module = '1' else (others => '0');
+  c_g1_out <= c_out when activate_module = '1' else (others => '0');
 
 end architecture behavior;

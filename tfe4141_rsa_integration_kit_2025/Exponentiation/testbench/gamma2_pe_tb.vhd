@@ -13,6 +13,7 @@ architecture sim of gamma2_pe_tb is
   -- Signals
   signal clk       : std_logic := '0';
   signal reset     : std_logic := '0';
+  signal activate_module : std_logic := '0';
   signal m         : unsigned(WORD_WIDTH-1 downto 0) := (others => '0');
   signal p_i       : unsigned(WORD_WIDTH-1 downto 0) := (others => '0');
   signal s_a1_out  : unsigned(WORD_WIDTH-1 downto 0) := (others => '0');
@@ -31,6 +32,7 @@ begin
     port map (
       clk       => clk,
       reset     => reset,
+      activate_module => activate_module,
       m         => m,
       p_i       => p_i,
       s_a1_out  => s_a1_out,
@@ -57,8 +59,10 @@ begin
     
     -- Apply reset
     reset <= '1';
+    activate_module <= '0';
     wait until rising_edge(clk);
     reset <= '0';
+    activate_module <= '0';  -- Enable the module
     wait until rising_edge(clk);
     report "Reset completed";
     
@@ -83,6 +87,7 @@ begin
     -- m * p_i + s_a2_out + prev_c_g2_out
     m <= to_unsigned(4, WORD_WIDTH);
     p_i <= to_unsigned(6, WORD_WIDTH);
+    activate_module <= '1';
     s_a1_out <= to_unsigned(100, WORD_WIDTH);
     s_a2_out <= to_unsigned(50, WORD_WIDTH);
     c_g1_out <= to_unsigned(5, WORD_WIDTH);

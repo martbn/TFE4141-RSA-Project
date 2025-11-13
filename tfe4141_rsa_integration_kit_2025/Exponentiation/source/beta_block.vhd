@@ -27,13 +27,13 @@ begin
     variable m_temp     : unsigned(WORD_WIDTH-1 downto 0);
   begin
     -- temp1 = s_in * p_marked (full 2*WORD_WIDTH product)
-    temp1 := s_in * p_marked
+    temp1 := s_in * p_marked;
 
     -- m_temp := low WORD_WIDTH bits of temp1
     m_temp := temp1(WORD_WIDTH-1 downto 0);
 
     -- temp2 = m_temp * p_zero (full product)
-    temp2 := m_temp * p_zero
+    temp2 := m_temp * p_zero;
 
     -- temp3 = s_in + temp2 (s_in resize d to full width)
     temp3 := resize(s_in, temp3'length) + temp2;

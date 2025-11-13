@@ -9,6 +9,7 @@ entity gamma_final_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     
     s1_gf_in    : in  unsigned(WORD_WIDTH-1 downto 0);
     s2_gf_in    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -37,8 +38,8 @@ begin
       s2_out   => s2_out
     );
 
-  -- Connect internal signals to output ports
-  s1_gf_out <= s1_out;
-  s2_gf_out <= s2_out;
+  -- Connect internal signals to output ports with activation check
+  s1_gf_out <= s1_out when activate_module = '1' else (others => '0');
+  s2_gf_out <= s2_out when activate_module = '1' else (others => '0');
 
 end architecture behavior;

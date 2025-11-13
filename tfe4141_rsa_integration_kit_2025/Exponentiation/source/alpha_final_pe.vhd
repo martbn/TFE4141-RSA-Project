@@ -9,6 +9,7 @@ entity alpha_final_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     
     s_af_in    : in  unsigned(WORD_WIDTH-1 downto 0);
     c_af_in    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -31,12 +32,12 @@ begin
     port map (
       t_in    => s_af_in,
       c_in    => c_af_in,
-      t_out   => t_out,
-      c_out   => c_out
+      s1_out   => t_out,
+      s2_out   => c_out
     );
 
-  -- Connect internal signals to output ports
-  s1_af_out <= t_out;
-  s2_af_out <= c_out;
+  -- Connect internal signals to output ports with activation check
+  s1_af_out <= t_out when activate_module = '1' else (others => '0');
+  s2_af_out <= c_out when activate_module = '1' else (others => '0');
 
 end architecture behavior;

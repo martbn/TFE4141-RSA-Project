@@ -9,6 +9,7 @@ entity gamma3_pe is
   port (
     clk         : in  std_logic;
     reset       : in  std_logic := '0';
+    activate_module : in std_logic;
     m     : in  unsigned(WORD_WIDTH-1 downto 0);
     p_i      : in  unsigned(WORD_WIDTH-1 downto 0);
     s_a2_out    : in  unsigned(WORD_WIDTH-1 downto 0);
@@ -65,8 +66,8 @@ architecture behavior of gamma3_pe is
       c_out   => c_internal
     );
 
-  -- Connect internal signals to output ports
-  s_g3_out <= t_out;
-  c_g3_out <= c_internal;
+  -- Output the results directly (no activation gating)
+  s_g3_out <= t_out when activate_module = '1' else (others => '0');
+  c_g3_out <= c_internal when activate_module = '1' else (others => '0');
 
 end architecture behavior;

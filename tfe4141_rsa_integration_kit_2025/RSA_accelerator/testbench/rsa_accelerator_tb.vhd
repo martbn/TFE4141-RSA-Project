@@ -215,7 +215,6 @@ architecture struct of rsa_accelerator_tb is
 		variable e               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		variable d               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		variable n               : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		variable R         : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		variable R_squared : std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	begin
 		-- Read comment
@@ -229,19 +228,16 @@ architecture struct of rsa_accelerator_tb is
 		-- Read comment
 		readline(tc_inp, line_from_file);
 		report "READ COMMENT 2: " & line_from_file.all;
+		-- Read R_mod_n (skip - not used)
+		readline(tc_inp, line_from_file);
+		-- Read comment
+		readline(tc_inp, line_from_file);
+		report "READ COMMENT 3: " & line_from_file.all;
 		-- Read R_squared_mod_n
 		readline(tc_inp, line_from_file);
 		read(line_from_file, s64);
 		R_squared := str_to_stdvec(s64);
 		report "READ R_squared: " & s64;
-		-- Read comment
-		readline(tc_inp, line_from_file);
-		report "READ COMMENT 3: " & line_from_file.all;
-		-- Read R_mod_n
-		readline(tc_inp, line_from_file);
-		read(line_from_file, s64);
-		R := str_to_stdvec(s64);
-		report "READ R: " & s64;
 		-- Read comment
 		readline(tc_inp, line_from_file);
 		report "READ COMMENT 4: " & line_from_file.all;
@@ -282,10 +278,8 @@ architecture struct of rsa_accelerator_tb is
 		end if;
 		kn <= n;
 		krsq <= R_squared;
-		kr <= R;
 		report "ASSIGNED kn = " & stdvec_to_string(n);
 		report "ASSIGNED krsq = " & stdvec_to_string(R_squared);
-		report "ASSIGNED kr = " & stdvec_to_string(R);
 	end read_keys_and_command;
 
 	-----------------------------------------------------------------------------

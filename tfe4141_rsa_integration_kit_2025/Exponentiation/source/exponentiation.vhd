@@ -50,8 +50,6 @@ architecture Structural of exponentiation is
 	signal  precomp_mem_din  : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  precomp_mem_dout : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  precomp_mem_we   : STD_LOGIC;
-	-- Debug constants: force R values locally (256-bit hex literals)
-	constant R_squared_mod_n_const : STD_LOGIC_VECTOR(C_block_size-1 downto 0) := x"3a8b6f5e2d3c4b7f9e0a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcd";
 
 begin
     
@@ -82,7 +80,7 @@ begin
 		precomp_we   => precomp_mem_we,
 		precomp_din  => precomp_mem_din,
 		precomp_dout => precomp_mem_dout,
-		R_squared_mod_n => R_squared_mod_n_const
+		R_squared_mod_n => R_squared_mod_n
 	);
 
 	-- Instantiate Montgomery Multiplier

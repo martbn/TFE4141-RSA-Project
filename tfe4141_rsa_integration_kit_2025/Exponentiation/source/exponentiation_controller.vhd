@@ -175,8 +175,8 @@ begin
             mont_running <= '0';
         end if;
         
-        -- Initialize C and P on data accept (synchronous load)
-        if state = CONV_2_MONT  then
+        -- Initialize C and P when transitioning from LOAD_DATA to CONV_2_MONT
+        if state = LOAD_DATA then
             C_reg <= R_squared_mod_n;
             P_reg <= message;
             -- precomp_index is driven by precomp_index_next (set in comb_proc)
@@ -184,8 +184,13 @@ begin
 
         -- Update C and P after Montgomery multiplication completes after CONV_2_MONT
         if montgomery_done = '1' and state = CONV_2_MONT then
-            C_reg <= montgomery_S;
-            P_reg <= montgomery_S;
+            C_reg <= montgomery_S;  -- Mont(message) for precomputation base
+            -- Initialize P_reg to Mont(1) = R mod n for exponentiation accumulator
+            -- We compute this by extracting R from R² using the relation:
+            -- R² × R⁻¹ = R, so we need R mod n directly
+            -- For now, we'll compute it as Mont(R², 1) in a later fix
+            -- Actually, the simplest is: at the start of first window, P = Mont(1)
+            P_reg <= montgomery_S;  -- Temporarily store Mont(message), will be replaced at first window
         end if;
 
         -- CLNW_scan_request is driven as a registered pulse from comb_proc via
@@ -337,11 +342,9 @@ begin
     ready_in <= '0';
     done <= '0';
     
-    -- Default: Montgomery multiplier control (use pulse). Drive A/B from
-    -- the registered values so they remain stable while the core is running
-    -- (avoids A/B becoming zeros during WINDOW_WAIT_MONT). Specific state
-    -- branches may override these when a different source is needed.
-    montgomery_enable <= mont_enable_pulse;
+    -- Montgomery multiplier control: keep enable HIGH while running
+    -- (level-sensitive protocol: enable stays '1' until done='1')
+    montgomery_enable <= mont_running;
 
     montgomery_N <= modulus;
     -- Default A/B drive from registered C_reg/P_reg to avoid inferred latches
@@ -364,6 +367,7 @@ begin
         when IDLE =>
             -- ===== IDLE: Wait for start signal and advertise ready =====
             -- Assert ready unconditionally in IDLE to signal we can accept data
+            ready_in <= '1';
             result <= (others => '0');
             if start = '1' then
                 msb_scan_request <= '1';  -- Start MSB scan for incoming key
@@ -375,7 +379,6 @@ begin
                 MSB_index_next <= C_block_size - 1;  -- Initialize MSB index to max
             end if;
         when LOAD_DATA =>
-            ready_in <= '1';
             -- ===== LOAD_DATA: Load message, key, modulus into registers =====
             -- Handled in sequential process on data_accept signal
             next_state <= CONV_2_MONT;
@@ -413,13 +416,13 @@ begin
                     -- First multiplication: compute base² = Mont(base) * Mont(base)
                     mont_request <= '1';
                     montgomery_A <= C_reg;  -- base in Montgomery form
-                    montgomery_B <= P_reg;  -- base in Montgomery form
+                    montgomery_B <= C_reg;  -- base in Montgomery form (same value)
                 else
-                    if precomp_index = 1 then
+                    if precomp_index = 0 then
                         -- Second multiplication after base^2: compute base^3 = base^2 * base
                         mont_request <= '1';
-                        montgomery_A <= C_reg;
-                        montgomery_B <= P_reg;
+                        montgomery_A <= P_reg;  -- base² (computed and stored in P_reg)
+                        montgomery_B <= C_reg;  -- base (still in C_reg from CONV_2_MONT)
                     else
                         -- Subsequent multiplications: next_odd = last_odd * base^2
                         mont_request <= '1';
@@ -430,8 +433,9 @@ begin
             end if;
             
             if montgomery_done = '1' then
-                if precomp_first_done = '0' and precomp_index = 1 then
+                if precomp_first_done = '0' then
                     -- First result (base²) saved in seq proc; stay to compute base³
+                    -- Don't increment precomp_index yet (still at 0 for base¹/base³ pair)
                     precomp_first_done_next <= '1';
                     next_state <= PRECOMPUTE;
                 else
@@ -454,18 +458,24 @@ begin
                 next_state <= WAIT_MEM_WRITE;
             else
                 -- Second cycle: determine if more precomputation needed
-                -- Current exponent = 2*precomp_index + 1
-                if (2 * precomp_index + 1) >= (2**window_size - 1) then
-                    -- All powers computed; proceed to exponentiation
-                    next_state <= WINDOW_SCAN;
-                else
-                    -- More powers to compute
+                -- If we just wrote base^1, initialize precomp_index to 1 for base^3
+                if precomp_base1_written = '1' and precomp_first_done = '0' and precomp_index = 0 then
+                    precomp_index_next <= 1;
                     next_state <= PRECOMPUTE;
-                end if;
+                else
+                    -- Current exponent = 2*precomp_index + 1
+                    if (2 * precomp_index + 1) >= (2**window_size - 1) then
+                        -- All powers computed; proceed to exponentiation
+                        next_state <= WINDOW_SCAN;
+                    else
+                        -- More powers to compute
+                        next_state <= PRECOMPUTE;
+                    end if;
 
-                -- Advance index if more entries remain
-                if (2 * precomp_index + 1) < (2**window_size - 1) then
-                    precomp_index_next <= precomp_index + 1;
+                    -- Advance index if more entries remain
+                    if (2 * precomp_index + 1) < (2**window_size - 1) then
+                        precomp_index_next <= precomp_index + 1;
+                    end if;
                 end if;
             end if;
 

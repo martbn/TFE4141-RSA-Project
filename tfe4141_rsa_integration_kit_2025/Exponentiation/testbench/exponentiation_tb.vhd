@@ -20,8 +20,7 @@ architecture behavior of exponentiation_tb is
     signal ready_out : std_logic := '0';
     signal valid_out : std_logic;
     signal result    : std_logic_vector(C_block_size-1 downto 0);
-    signal modulus   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
-    signal R_mod_n_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
+        signal modulus   : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     signal R_squared_tb : std_logic_vector(C_block_size-1 downto 0) := (others => '0');
     -- expected results for small test vectors (padded to 256 bits)
     -- Test A: n=53, m=10, e=7 => m^e mod n = 13 (0x0D)
@@ -85,7 +84,6 @@ begin
     );
 
     -- stimulus process: apply reset, single test vector, wait for result
-    stim : process
         variable cycles : integer := 0;
         constant TIMEOUT_CYCLES : integer := 30000; -- safety timeout
         variable small_timeout : integer := 500; -- short timeout for per-test ready wait (allows forcing a pulse)
@@ -112,8 +110,7 @@ begin
 
     -- Wait for DUT to indicate ready to accept inputs
     cycles := 0;
-    while ready_in /= '1' loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for ready_in (Test A)" severity failure;
@@ -133,7 +130,7 @@ begin
     -- wait for both valid_out and our ready_out (consumer accept)
     cycles := 0;
     while not (valid_out = '1' and ready_out = '1') loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for valid_out & ready_out (Test A)" severity failure;
@@ -169,7 +166,6 @@ begin
 
     wait for 20 ns;
 
-    valid_in <= '1';
     wait until rising_edge(clk);
     valid_in <= '0';
     -- Wait for DUT to indicate ready to accept inputs
@@ -231,7 +227,6 @@ begin
 
     wait for 20 ns;
 
-    valid_in <= '1';
     wait until rising_edge(clk);
     valid_in <= '0';
     -- Wait for DUT to indicate ready to accept inputs
@@ -294,7 +289,6 @@ begin
     wait for 20 ns;
 
     -- Indicate consumer readiness to the DUT, aligned to the clock to avoid races.
-    ready_out <= '1';
     -- give the DUT one clock to sample ready_out
     wait until rising_edge(clk);
 
@@ -357,7 +351,6 @@ begin
     wait for 20 ns;
 
     -- Indicate consumer readiness to the DUT, aligned to the clock
-    ready_out <= '1';
     wait until rising_edge(clk);
 
     cycles := 0;

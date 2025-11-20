@@ -31,7 +31,6 @@ def main():
     rmod = R % n
     r2mod = (R * R) % n
     width_nibbles = (k + 3) // 4
-    print('R_mod_n =', format(rmod, '0{}x'.format(width_nibbles)))
     print('R_squared_mod_n =', format(r2mod, '0{}x'.format(width_nibbles)))
     return 0
 

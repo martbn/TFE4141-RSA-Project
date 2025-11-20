@@ -61,7 +61,6 @@ entity rsa_core is
 		key_e_d                 :  in std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		key_n                   :  in std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		R_squared_mod_n         :  in std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-		R_mod_n                 :  in std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 		rsa_status              : out std_logic_vector(31 downto 0)
 
 	);
@@ -78,7 +77,6 @@ begin
 			message         => msgin_data      ,
 			key             => key_e_d         ,
 			R_squared_mod_n => R_squared_mod_n ,
-			R_mod_n         => R_mod_n         ,
 			valid_in        => msgin_valid     ,
 			ready_in        => msgin_ready     ,
 			ready_out       => msgout_ready    ,

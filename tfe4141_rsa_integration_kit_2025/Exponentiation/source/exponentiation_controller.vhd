@@ -38,27 +38,42 @@ end exponentiation_controller;
 
 architecture Behavioral of exponentiation_controller is
     
+    -- Function to calculate the bit length of a key (MSB position + 1)
+    -- This is purely combinational and synthesizes to a priority encoder
+    function calc_bit_length(key_val : STD_LOGIC_VECTOR) return integer is
+    begin
+        for i in key_val'high downto key_val'low loop
+            if key_val(i) = '1' then
+                return i + 1;
+            end if;
+        end loop;
+        return 1; -- Minimum length
+    end function;
+    
     -- State machine for RL Binary Method
     type state_type is (
         IDLE,
+        LATCH_INPUTS,           -- Latch inputs and calculate key length
         -- Montgomery domain conversion states
         CONVERT_M_TO_MONT,      -- Convert M to Montgomery: M' = M * R^2 * R^-1 = M * R
         WAIT_M_CONV,            -- Wait for M conversion
+        SETUP_1_CONV,           -- Setup for 1 conversion (delay state)
         CONVERT_1_TO_MONT,      -- Convert 1 to Montgomery: 1' = 1 * R^2 * R^-1 = R
         WAIT_1_CONV,            -- Wait for 1 conversion
         -- RL algorithm states
         INIT_RL,                -- Initialize C := 1, P := M (in Montgomery domain)
         LOOP_CHECK,             -- Check if loop should continue
+        SETUP_C_P,              -- Setup for C*P multiplication (delay state)
         MULT_C_P,               -- Step 2a: if ei = 1, C := C * P (mod n)
         WAIT_C_P,               -- Wait for C*P multiplication
+        SETUP_P_P,              -- Setup for P*P multiplication (delay state)
         MULT_P_P,               -- Step 2b: P := P * P (mod n)
         WAIT_P_P,               -- Wait for P*P multiplication
-        FINAL_CHECK,            -- Check if final bit (eh-1) needs processing
-        FINAL_MULT,             -- Step 3: C := C * P (mod n)
-        WAIT_FINAL,             -- Wait for final multiplication
+        SETUP_FROM_CONV,        -- Setup for Montgomery to normal conversion (delay state)
         CONVERT_FROM_MONT,      -- Convert result from Montgomery domain: C_final = C' * 1 * R^-1
         WAIT_FROM_CONV,         -- Wait for final conversion
-        OUTPUT_RESULT           -- Output the result
+        OUTPUT_RESULT,          -- Output the result
+        DONE_STATE              -- Cleanup state before returning to IDLE
     );
     
     signal state : state_type := IDLE;
@@ -69,19 +84,24 @@ architecture Behavioral of exponentiation_controller is
     signal M_mont : STD_LOGIC_VECTOR(C_block_size-1 downto 0); -- M in Montgomery domain
     signal one_mont : STD_LOGIC_VECTOR(C_block_size-1 downto 0); -- 1 in Montgomery domain (= R mod n)
     
-    -- Exponent processing
+    -- Input registers - latch message and key when accepted
+    signal message_reg : STD_LOGIC_VECTOR(C_block_size-1 downto 0);
     signal key_reg : STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+    
+    -- Output register - holds result until next computation completes
+    signal result_reg : STD_LOGIC_VECTOR(C_block_size-1 downto 0);
+    
+    -- Exponent processing
     signal bit_index : integer range 0 to C_block_size-1 := 0;
-    signal current_bit : STD_LOGIC;
     signal key_length : integer range 0 to C_block_size := 0;
     
 begin
     
-    -- Always use modulus for Montgomery operations
+    -- Always use modulus directly (it's stable from AXI registers)
     montgomery_N <= modulus;
     
-    -- Extract current bit from exponent
-    current_bit <= key_reg(bit_index);
+    -- Output result directly from computation for debugging
+    result <= result_reg;
     
     -- Main FSM process
     process(clk, reset_n)
@@ -93,55 +113,61 @@ begin
             montgomery_B <= (others => '0');
             ready_in <= '1';
             done <= '0';
-            result <= (others => '0');
+            result_reg <= (others => '0');
             C_reg <= (others => '0');
             P_reg <= (others => '0');
             M_mont <= (others => '0');
             one_mont <= (others => '0');
+            message_reg <= (others => '0');
             key_reg <= (others => '0');
             bit_index <= 0;
             key_length <= 0;
             
         elsif rising_edge(clk) then
-            -- Default: disable Montgomery multiplier unless explicitly enabled
-            montgomery_enable <= '0';
             
             case state is
                 
                 when IDLE =>
-                    ready_in <= '1';
+                    montgomery_enable <= '0';
                     done <= '0';
                     bit_index <= 0;
                     
-                    if start = '1' then
-                        -- Latch inputs
+                    if start = '1' and ready_in = '1' then
+                        -- Latch message and key when handshake occurs
+                        message_reg <= message;
                         key_reg <= key;
-                        
-                        -- Find the most significant bit of the key (key_length)
-                        key_length <= C_block_size;
-                        for i in C_block_size-1 downto 0 loop
-                            if key(i) = '1' then
-                                key_length <= i + 1;
-                                exit;
-                            end if;
-                        end loop;
-                        
                         ready_in <= '0';
-                        state <= CONVERT_M_TO_MONT;
+                        state <= LATCH_INPUTS;
+                    else
+                        ready_in <= '1';
                     end if;
+                
+                -- Calculate key length from latched key_reg
+                when LATCH_INPUTS =>
+                    montgomery_enable <= '0';
+                    -- Calculate bit length using function (combinational)
+                    key_length <= calc_bit_length(key_reg);
+                    state <= CONVERT_M_TO_MONT;
                 
                 -- Convert M to Montgomery domain: M' = M * R mod n = M * R^2 * R^-1 mod n
                 when CONVERT_M_TO_MONT =>
-                    montgomery_A <= message;
+                    montgomery_A <= message_reg;  -- Use latched message
                     montgomery_B <= R_squared_mod_n;
                     montgomery_enable <= '1';
                     state <= WAIT_M_CONV;
                 
                 when WAIT_M_CONV =>
+                    montgomery_enable <= '1';  -- Keep enable HIGH until done
                     if montgomery_done = '1' then
+                        montgomery_enable <= '0';
                         M_mont <= montgomery_S;
-                        state <= CONVERT_1_TO_MONT;
+                        state <= SETUP_1_CONV;
                     end if;
+                
+                -- Setup state: Let Montgomery module reset before next operation
+                when SETUP_1_CONV =>
+                    montgomery_enable <= '0';
+                    state <= CONVERT_1_TO_MONT;
                 
                 -- Convert 1 to Montgomery domain: 1' = 1 * R^2 * R^-1 mod n = R mod n
                 when CONVERT_1_TO_MONT =>
@@ -151,32 +177,41 @@ begin
                     state <= WAIT_1_CONV;
                 
                 when WAIT_1_CONV =>
+                    montgomery_enable <= '1';  -- Keep enable HIGH until done
                     if montgomery_done = '1' then
+                        montgomery_enable <= '0';
                         one_mont <= montgomery_S;
                         state <= INIT_RL;
                     end if;
                 
                 -- Initialize: C := 1 (in Montgomery domain), P := M (in Montgomery domain)
                 when INIT_RL =>
+                    montgomery_enable <= '0';
                     C_reg <= one_mont;  -- C = 1 in Montgomery domain
                     P_reg <= M_mont;    -- P = M in Montgomery domain
                     bit_index <= 0;
                     state <= LOOP_CHECK;
                 
-                -- Check if we should continue the main loop (i = 0 to h-2)
+                        -- Check if we should continue the main loop (i = 0 to h-1)
                 when LOOP_CHECK =>
-                    if bit_index < key_length - 1 then
-                        -- Check if current bit ei is 1
-                        if current_bit = '1' then
-                            state <= MULT_C_P;
+                    montgomery_enable <= '0';
+                    if bit_index < key_length then
+                        -- Sample current bit and check if ei is 1
+                        if key_reg(bit_index) = '1' then
+                            state <= SETUP_C_P;
                         else
-                            -- Skip step 2a, go directly to step 2b
-                            state <= MULT_P_P;
+                            -- Skip C*P multiplication, go directly to P*P squaring
+                            state <= SETUP_P_P;
                         end if;
                     else
-                        -- Loop complete, check final bit
-                        state <= FINAL_CHECK;
+                        -- All bits processed, convert result back from Montgomery domain
+                        state <= SETUP_FROM_CONV;
                     end if;
+                
+                -- Setup state for C*P multiplication
+                when SETUP_C_P =>
+                    montgomery_enable <= '0';
+                    state <= MULT_C_P;
                 
                 -- Step 2a: C := C * P (mod n)
                 when MULT_C_P =>
@@ -186,10 +221,17 @@ begin
                     state <= WAIT_C_P;
                 
                 when WAIT_C_P =>
+                    montgomery_enable <= '1';  -- Keep enable HIGH until done
                     if montgomery_done = '1' then
+                        montgomery_enable <= '0';
                         C_reg <= montgomery_S;
-                        state <= MULT_P_P;
+                        state <= SETUP_P_P;
                     end if;
+                
+                -- Setup state for P*P multiplication
+                when SETUP_P_P =>
+                    montgomery_enable <= '0';
+                    state <= MULT_P_P;
                 
                 -- Step 2b: P := P * P (mod n) - squaring
                 when MULT_P_P =>
@@ -199,33 +241,18 @@ begin
                     state <= WAIT_P_P;
                 
                 when WAIT_P_P =>
+                    montgomery_enable <= '1';  -- Keep enable HIGH until done
                     if montgomery_done = '1' then
+                        montgomery_enable <= '0';
                         P_reg <= montgomery_S;
                         bit_index <= bit_index + 1;
                         state <= LOOP_CHECK;
                     end if;
                 
-                -- Step 3: Check if final bit eh-1 = 1
-                when FINAL_CHECK =>
-                    if key_length > 0 and key_reg(key_length - 1) = '1' then
-                        state <= FINAL_MULT;
-                    else
-                        -- Skip final multiplication
-                        state <= CONVERT_FROM_MONT;
-                    end if;
-                
-                -- Step 3: C := C * P (mod n)
-                when FINAL_MULT =>
-                    montgomery_A <= C_reg;
-                    montgomery_B <= P_reg;
-                    montgomery_enable <= '1';
-                    state <= WAIT_FINAL;
-                
-                when WAIT_FINAL =>
-                    if montgomery_done = '1' then
-                        C_reg <= montgomery_S;
-                        state <= CONVERT_FROM_MONT;
-                    end if;
+                -- Setup state for final conversion
+                when SETUP_FROM_CONV =>
+                    montgomery_enable <= '0';
+                    state <= CONVERT_FROM_MONT;
                 
                 -- Convert result from Montgomery domain: result = C' * 1 * R^-1 mod n
                 when CONVERT_FROM_MONT =>
@@ -235,18 +262,37 @@ begin
                     state <= WAIT_FROM_CONV;
                 
                 when WAIT_FROM_CONV =>
+                    montgomery_enable <= '1';  -- Keep enable HIGH until done
                     if montgomery_done = '1' then
-                        result <= montgomery_S;
+                        montgomery_enable <= '0';
+                        result_reg <= montgomery_S;  -- Store in result register
                         done <= '1';
                         state <= OUTPUT_RESULT;
                     end if;
                 
                 -- Output the final result
                 when OUTPUT_RESULT =>
-                    done <= '1';
+                    montgomery_enable <= '0';
+                    -- done stays HIGH (set in previous state)
+                    -- Keep result stable
                     if ready_out = '1' then
-                        state <= IDLE;
+                        -- Handshake complete - transition to cleanup state
+                        done <= '0';  -- Clear done only when handshake completes
+                        state <= DONE_STATE;
                     end if;
+                
+                -- Cleanup state: ensure clean transition back to IDLE
+                when DONE_STATE =>
+                    montgomery_enable <= '0';
+                    done <= '0';  -- Keep done LOW
+                    ready_in <= '1';  -- Ready for next input
+                    -- Clear internal computation registers to prevent state leakage
+                    C_reg <= (others => '0');
+                    P_reg <= (others => '0');
+                    M_mont <= (others => '0');
+                    one_mont <= (others => '0');
+                    bit_index <= 0;
+                    state <= IDLE;  -- Go back to idle on next clock
                 
                 when others =>
                     state <= IDLE;

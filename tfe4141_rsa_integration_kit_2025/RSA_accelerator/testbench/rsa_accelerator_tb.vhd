@@ -499,13 +499,18 @@ begin
 								msgin_last  <= '0';
 
 							-- Send a new message
-							-- The last signal is set now and then.
+							-- The last signal is set for every 8th word (256-bit messages over 32-bit interface)
 							else
 								msgin_valid <= '1';
 								read_input_message(input_message);
 								msgin_data <= input_message;
 								report "DRIVE NEW MSGIN_DATA[" & stdvec_to_string(std_logic_vector(msgin_counter)) & "] " & "RTL: " & stdvec_to_string(input_message);
-								msgin_last <= msgin_counter(1);
+								-- Set last on words 7, 15, 23, etc. (when lower 3 bits = 111)
+								if (msgin_counter(2 downto 0) = "111") then
+									msgin_last <= '1';
+								else
+									msgin_last <= '0';
+								end if;
 								msgin_counter <= msgin_counter + 1;
 							end if;
 
@@ -586,7 +591,8 @@ begin
 							assert expected_msgout_data = msgout_data
 								report "Output message differs from the expected result"
 								severity Failure;
-							assert msgout_counter(1) = msgout_last
+							-- Check last signal for 256-bit messages (8 words): last should be high on words 7, 15, 23, etc.
+							assert (msgout_counter(2 downto 0) = "111") = (msgout_last = '1')
 								report "msgin_last/msgout_last mismatch"
 								severity Failure;
 

@@ -69,6 +69,8 @@ end rsa_core;
 
 architecture rtl of rsa_core is
 
+	type state is (NOT_LAST, LAST, HOLD);
+	signal curr_msgstate, next_msgstate : state;
 begin
 	i_exponentiation : entity work.exponentiation
 		generic map (
@@ -88,7 +90,52 @@ begin
 			clk             => clk             ,
 			reset_n         => reset_n
 		);
+	
+	msgFSM: process (curr_msgstate, msgin_last, msgin_ready, msgout_valid) begin
+		case (curr_msgstate) is
+			when (NOT_LAST) => 
+				msgout_last 	<= '0';
 
-	msgout_last  <= msgin_last;
+				if (msgin_last = '1' and msgin_ready = '1') then
+					next_msgstate 	<= LAST;
+				else
+					next_msgstate 	<= NOT_LAST;
+				end if;
+
+			when (LAST) =>
+			    msgout_last 	<= '0';
+			    
+				if (msgout_valid = '1') then
+					msgout_last		<= '1';
+					next_msgstate   <= HOLD;
+				else 
+				    next_msgstate 	<= LAST;
+				end if;
+				
+			when (HOLD) =>
+			    msgout_last		<= '1';
+			    
+			    if (msgout_valid = '0') then
+			        next_msgstate 	<= NOT_LAST;
+			        msgout_last 	<= '0';
+			    else
+			        next_msgstate   <= HOLD;
+			    end if;
+			when others => 
+				msgout_last 	<= '0';
+				next_msgstate	<= NOT_LAST;
+			 
+		end case;
+	end process msgFSM;
+
+	msgfsmSync : process(reset_n, clk) 
+    begin
+        if (reset_n = '0') then
+            curr_msgstate <= NOT_LAST;
+        elsif (clk'event and clk='1') then
+            curr_msgstate <= next_msgstate;
+        end if;
+    end process msgfsmSync;
+
 	rsa_status   <= (others => '0');
 end rtl;

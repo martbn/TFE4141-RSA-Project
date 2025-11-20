@@ -24,7 +24,7 @@ entity rsa_core is
 		-- Users to add parameters here
 		C_BLOCK_SIZE          : integer := 256;
 		-- Number of parallel exponentiation cores
-		Num_Cores             : integer := 7
+		Num_Cores             : integer := 8
 	);
 	port (
 		-----------------------------------------------------------------------------
@@ -71,26 +71,34 @@ end rsa_core;
 
 architecture rtl of rsa_core is
 
-	-- Matrix for multiple core outputs
+	-- Matrix for core outputs and flags
 	type t_matrix is array (0 to Num_Cores-1) of std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-	signal msgout_vector            : t_matrix;
+	signal msgout_vector       : t_matrix;
+	signal core_flag_out       : std_logic_vector(Num_Cores-1 downto 0);
 	
-	-- Vector signals connecting to each core
-	signal valid_in_vector          : std_logic_vector(Num_Cores-1 downto 0);
-	signal valid_out_vector         : std_logic_vector(Num_Cores-1 downto 0);
-	signal ready_in_vector          : std_logic_vector(Num_Cores-1 downto 0);
-	signal ready_out_vector         : std_logic_vector(Num_Cores-1 downto 0);
+	-- Core control signals
+	signal cores_start         : std_logic_vector(Num_Cores-1 downto 0);
+	signal cores_start_nxt     : std_logic_vector(Num_Cores-1 downto 0);
+	signal cores_clear         : std_logic_vector(Num_Cores-1 downto 0);
+	signal cores_clear_nxt     : std_logic_vector(Num_Cores-1 downto 0);
+	signal cores_done          : std_logic_vector(Num_Cores-1 downto 0);
+	signal cores_busy          : std_logic_vector(Num_Cores-1 downto 0);
 	
-	-- Internal helper signals for priority encoding
-	signal ready_in_internal        : std_logic_vector(Num_Cores-1 downto 0);
-	signal valid_out_internal       : std_logic_vector(Num_Cores-1 downto 0);
+	-- Round-robin counters
+	signal next_to_start       : integer range 0 to Num_Cores-1;
+	signal next_to_start_nxt   : integer range 0 to Num_Cores-1;
+	signal next_to_finish      : integer range 0 to Num_Cores-1;
+	signal next_to_finish_nxt  : integer range 0 to Num_Cores-1;
 	
-	-- Last signal tracking per core
-	signal last_in_core             : std_logic_vector(Num_Cores-1 downto 0);
-	signal last_accepted            : std_logic;
+	-- FSM types and signals
+	type state_type_input is (IDLE, CHECK_CORES, WAIT_FOR_CORE_START);
+	signal Input_State, NIS    : state_type_input;
+	
+	type state_type_output is (MONITOR_CORE_OUTPUT, WRITE_DATA);
+	signal Output_State, NOS   : state_type_output;
 
 begin
-	-- Generate Num_Cores exponentiation cores
+	-- Generate Num_Cores exponentiation cores with start/clear control
 	Cores : for i in 0 to Num_Cores-1 generate
 	begin
 		i_exponentiation : entity work.exponentiation
@@ -102,94 +110,141 @@ begin
 				key             => key_e_d,
 				R_squared_mod_n => R_squared_mod_n,
 				R_mod_n         => R_mod_n,
-				valid_in        => valid_in_vector(i),
-				ready_in        => ready_in_vector(i),
-				ready_out       => ready_out_vector(i),
-				valid_out       => valid_out_vector(i),
+				valid_in        => cores_start(i),
+				ready_in        => open,  -- Not used in this architecture
+				ready_out       => cores_clear(i),
+				valid_out       => cores_done(i),
 				result          => msgout_vector(i),
 				modulus         => key_n,
 				clk             => clk,
 				reset_n         => reset_n
 			);
+		
+		-- Track busy state: set on start, cleared on clear
+		process(clk, reset_n)
+		begin
+			if reset_n = '0' then
+				cores_busy(i) <= '0';
+				core_flag_out(i) <= '0';
+			elsif rising_edge(clk) then
+				if cores_start(i) = '1' then
+					cores_busy(i) <= '1';
+					core_flag_out(i) <= msgin_last;
+				elsif cores_clear(i) = '1' then
+					cores_busy(i) <= '0';
+				end if;
+			end if;
+		end process;
 	end generate Cores;
 	
-	-- Top-level ready/valid signals (OR of all cores)
-	msgin_ready  <= '1' when (ready_in_vector /= (Num_Cores-1 downto 0 => '0')) else '0';
-	msgout_valid <= '1' when (valid_out_vector /= (Num_Cores-1 downto 0 => '0')) else '0';
-	
-	-- Priority encoder: Generate internal ready_in and valid_out accumulation
-	process(ready_in_vector, valid_out_vector)
-	begin
-		ready_in_internal(0) <= '0';
-		valid_out_internal(0) <= '0';
-		for i in 0 to Num_Cores-2 loop
-			ready_in_internal(i+1) <= ready_in_vector(i) or ready_in_internal(i);
-			valid_out_internal(i+1) <= valid_out_vector(i) or valid_out_internal(i);
-		end loop;
-	end process;
-	
-	-- Generate individual valid_in and ready_out signals
-	-- Only the first ready core receives valid_in
-	-- Only the first valid core receives ready_out
-	process(ready_in_vector, ready_in_internal, msgin_valid, 
-	        valid_out_internal, valid_out_vector, msgout_ready)
-	begin
-		for i in 0 to Num_Cores-1 loop
-			valid_in_vector(i) <= (not ready_in_internal(i)) and ready_in_vector(i) and msgin_valid;
-			ready_out_vector(i) <= (not valid_out_internal(i)) and valid_out_vector(i) and msgout_ready;
-		end loop;
-	end process;
-	
-	-- Output mux: Drive output from the active core
-	process(msgout_vector, ready_out_vector)
-	begin
-		msgout_data <= (others => '0');
-		for i in 0 to Num_Cores-1 loop
-			if ready_out_vector(i) = '1' then
-				msgout_data <= msgout_vector(i);
-			end if;
-		end loop;
-	end process;
-	
-	-- Track which core received the last input message
-	process(clk, reset_n)
-		variable core_found : boolean;
+	-- Input FSM: Synchronous state update
+	Sync_input : process(clk, reset_n)
 	begin
 		if reset_n = '0' then
-			last_in_core <= (others => '0');
-			last_accepted <= '0';
+			cores_start <= (others => '0');
+			next_to_start <= 0;
+			Input_State <= IDLE;
 		elsif rising_edge(clk) then
-			-- When msgin_last is accepted, mark which core got it
-			if msgin_valid = '1' and msgin_last = '1' then
-				core_found := false;
-				-- Find which core is accepting and mark it
-				for i in 0 to Num_Cores-1 loop
-					if valid_in_vector(i) = '1' and ready_in_vector(i) = '1' and not core_found then
-						last_in_core <= (others => '0');
-						last_in_core(i) <= '1';
-						last_accepted <= '1';
-						core_found := true;
-					end if;
-				end loop;
-			-- Clear the flag after the last message output completes
-			elsif msgout_valid = '1' and msgout_ready = '1' and msgout_last = '1' then
-				last_in_core <= (others => '0');
-				last_accepted <= '0';
-			end if;
+			cores_start <= cores_start_nxt;
+			next_to_start <= next_to_start_nxt;
+			Input_State <= NIS;
 		end if;
 	end process;
 	
-	-- Generate msgout_last when the core with the last message outputs
-	process(ready_out_vector, last_in_core, msgout_valid)
+	-- Input FSM: Combinational next-state logic
+	Input_fsm : process(Input_State, msgin_valid, cores_busy, next_to_start)
 	begin
-		msgout_last <= '0';
-		if msgout_valid = '1' then
-			for i in 0 to Num_Cores-1 loop
-				if ready_out_vector(i) = '1' and last_in_core(i) = '1' then
-					msgout_last <= '1';
+		msgin_ready <= '0';
+		cores_start_nxt <= (others => '0');
+		next_to_start_nxt <= next_to_start;
+		
+		case Input_State is
+			when IDLE =>
+				if msgin_valid = '1' then
+					NIS <= CHECK_CORES;
+				else
+					NIS <= IDLE;
 				end if;
-			end loop;
+				
+			when CHECK_CORES =>
+				if cores_busy(next_to_start) = '0' then
+					cores_start_nxt(next_to_start) <= '1';
+					
+					-- Increment counter with wrap-around
+					if next_to_start >= (Num_Cores - 1) then
+						next_to_start_nxt <= 0;
+					else
+						next_to_start_nxt <= next_to_start + 1;
+					end if;
+					
+					NIS <= WAIT_FOR_CORE_START;
+				else
+					NIS <= CHECK_CORES;
+				end if;
+				
+			when WAIT_FOR_CORE_START =>
+				msgin_ready <= '1';
+				NIS <= IDLE;
+				
+			when others =>
+				NIS <= IDLE;
+		end case;
+	end process;
+	
+	-- Output FSM: Synchronous state update
+	Sync_output : process(clk, reset_n)
+	begin
+		if reset_n = '0' then
+			cores_clear <= (others => '0');
+			next_to_finish <= 0;
+			Output_State <= MONITOR_CORE_OUTPUT;
+		elsif rising_edge(clk) then
+			cores_clear <= cores_clear_nxt;
+			next_to_finish <= next_to_finish_nxt;
+			Output_State <= NOS;
 		end if;
+	end process;
+	
+	-- Output FSM: Combinational next-state logic
+	Output_fsm : process(Output_State, next_to_finish, cores_done, msgout_ready, msgout_vector, core_flag_out)
+	begin
+		msgout_data <= (others => '0');
+		msgout_valid <= '0';
+		msgout_last <= '0';
+		cores_clear_nxt <= (others => '0');
+		next_to_finish_nxt <= next_to_finish;
+		
+		case Output_State is
+			when MONITOR_CORE_OUTPUT =>
+				if cores_done(next_to_finish) = '1' then
+					NOS <= WRITE_DATA;
+				else
+					NOS <= MONITOR_CORE_OUTPUT;
+				end if;
+				
+			when WRITE_DATA =>
+				if msgout_ready = '1' then
+					msgout_data <= msgout_vector(next_to_finish);
+					msgout_last <= core_flag_out(next_to_finish);
+					msgout_valid <= '1';
+					
+					cores_clear_nxt(next_to_finish) <= '1';
+					
+					-- Increment counter with wrap-around
+					if next_to_finish >= (Num_Cores - 1) then
+						next_to_finish_nxt <= 0;
+					else
+						next_to_finish_nxt <= next_to_finish + 1;
+					end if;
+					
+					NOS <= MONITOR_CORE_OUTPUT;
+				else
+					NOS <= WRITE_DATA;
+				end if;
+				
+			when others =>
+				NOS <= MONITOR_CORE_OUTPUT;
+		end case;
 	end process;
 
 	rsa_status <= (others => '0');

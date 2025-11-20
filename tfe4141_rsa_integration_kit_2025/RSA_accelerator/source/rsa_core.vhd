@@ -24,7 +24,7 @@ entity rsa_core is
 		-- Users to add parameters here
 		C_BLOCK_SIZE          : integer := 256;
 		-- Number of parallel exponentiation cores
-		Num_Cores             : integer := 8
+		Num_Cores             : integer := 9
 	);
 	port (
 		-----------------------------------------------------------------------------

@@ -3,8 +3,7 @@ use ieee.std_logic_1164.all;
 
 entity exponentiation is
 	generic (
-		C_block_size : integer := 256;
-		window_size : integer := 4
+		C_block_size : integer := 256
 	);
 	port (
 		--input controll
@@ -47,19 +46,12 @@ architecture Structural of exponentiation is
 	signal  enable_mult : STD_LOGIC;
 	signal  done_mult : STD_LOGIC;
 
-	-- Precomputation signals
-	signal  precomp_mem_addr : STD_LOGIC_VECTOR (window_size-1 downto 0);
-	signal  precomp_mem_din  : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
-	signal  precomp_mem_dout : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
-	signal  precomp_mem_we   : STD_LOGIC;
-
 begin
 	
 	-- Instantiate Exponentiation Controller
 	controller_inst : entity work.exponentiation_controller
 	generic map (
-		C_block_size => C_block_size,
-		window_size  => window_size
+		C_block_size => C_block_size
 	)
 	port map (
 		clk    => clk,
@@ -78,10 +70,6 @@ begin
 		montgomery_B      => B,
 		montgomery_N      => N,
 		montgomery_S      => S,
-		precomp_addr => precomp_mem_addr,
-		precomp_we   => precomp_mem_we,
-		precomp_din  => precomp_mem_din,
-		precomp_dout => precomp_mem_dout,
 		R_mod_n => R_mod_n,
 		R_squared_mod_n => R_squared_mod_n
 	);
@@ -105,18 +93,4 @@ begin
 		S      => S
 	);
 
-	-- Instantiate Memory Unit
-	memory_inst : entity work.memory
-	generic map (
-		DATA_WIDTH => C_block_size,
-		WINDOW_SIZE => window_size
-	)
-	port map (
-		clk  => clk,
-		en   => '1',
-		we   => precomp_mem_we,
-		addr => precomp_mem_addr,
-		din  => precomp_mem_din,
-		dout => precomp_mem_dout
-	);
 end Structural;				

@@ -4,8 +4,7 @@ use ieee.numeric_std.all;
 
 entity exponentiation_controller is
     generic (
-        C_block_size : integer := 256;
-        window_size : integer := 4
+        C_block_size : integer := 256
     );
     port (
         clk    : in STD_LOGIC;
@@ -30,12 +29,6 @@ entity exponentiation_controller is
         montgomery_B      : out STD_LOGIC_VECTOR(C_block_size-1 downto 0);
         montgomery_N      : out STD_LOGIC_VECTOR(C_block_size-1 downto 0);
         montgomery_S      : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
-        
-        -- Precomputation memory interface (not used in basic RL method)
-        precomp_addr : out STD_LOGIC_VECTOR(window_size-1 downto 0);
-        precomp_we   : out STD_LOGIC;
-        precomp_din  : out STD_LOGIC_VECTOR(C_block_size-1 downto 0);
-        precomp_dout : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
         
         -- Montgomery constants
         R_mod_n : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
@@ -86,11 +79,6 @@ begin
     
     -- Always use modulus for Montgomery operations
     montgomery_N <= modulus;
-    
-    -- Not using precomputation memory in basic RL method
-    precomp_we <= '0';
-    precomp_addr <= (others => '0');
-    precomp_din <= (others => '0');
     
     -- Extract current bit from exponent
     current_bit <= key_reg(bit_index);

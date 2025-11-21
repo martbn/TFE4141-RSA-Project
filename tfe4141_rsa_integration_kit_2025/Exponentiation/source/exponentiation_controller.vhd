@@ -89,9 +89,16 @@ architecture Behavioral of exponentiation_controller is
     -- Output register - holds result until next computation completes
     signal result_reg : STD_LOGIC_VECTOR(C_block_size-1 downto 0);
     
-    -- Exponent processing
-    signal bit_index : integer range 0 to C_block_size-1 := 0;
-    signal key_length : integer range 0 to C_block_size := 0;
+    -- Exponent processing - use unsigned for better synthesis
+    signal bit_index : unsigned(8 downto 0) := (others => '0');  -- 0-255
+    signal key_length : unsigned(8 downto 0) := (others => '0'); -- 0-256
+    
+    -- Area optimization attributes
+    attribute SHREG_EXTRACT : string;
+    attribute SHREG_EXTRACT of message_reg : signal is "no";
+    attribute SHREG_EXTRACT of key_reg : signal is "no";
+    attribute SHREG_EXTRACT of C_reg : signal is "no";
+    attribute SHREG_EXTRACT of P_reg : signal is "no";
     
 begin
     
@@ -118,8 +125,8 @@ begin
             one_mont <= (others => '0');
             message_reg <= (others => '0');
             key_reg <= (others => '0');
-            bit_index <= 0;
-            key_length <= 0;
+            bit_index <= (others => '0');
+            key_length <= (others => '0');
             
         elsif rising_edge(clk) then
             
@@ -128,7 +135,7 @@ begin
                 when IDLE =>
                     montgomery_enable <= '0';
                     done <= '0';
-                    bit_index <= 0;
+                    bit_index <= (others => '0');
                     
                     if start = '1' and ready_in = '1' then
                         -- Latch message and key when handshake occurs
@@ -144,7 +151,7 @@ begin
                 when LATCH_INPUTS =>
                     montgomery_enable <= '0';
                     -- Calculate bit length using function (combinational)
-                    key_length <= calc_bit_length(key_reg);
+                    key_length <= to_unsigned(calc_bit_length(key_reg), 9);
                     state <= CONVERT_M_TO_MONT;
                 
                 -- Convert M to Montgomery domain: M' = M * R mod n = M * R^2 * R^-1 mod n
@@ -182,7 +189,7 @@ begin
                     montgomery_enable <= '0';
                     C_reg <= one_mont;  -- C = 1 in Montgomery domain
                     P_reg <= M_mont;    -- P = M in Montgomery domain
-                    bit_index <= 0;
+                    bit_index <= (others => '0');
                     state <= LOOP_CHECK;
                 
                         -- Check if we should continue the main loop (i = 0 to h-1)
@@ -190,7 +197,7 @@ begin
                     montgomery_enable <= '0';
                     if bit_index < key_length then
                         -- Sample current bit and check if ei is 1
-                        if key_reg(bit_index) = '1' then
+                        if key_reg(to_integer(bit_index)) = '1' then
                             state <= MULT_C_P;
                         else
                             -- Skip C*P multiplication, go directly to P*P squaring
@@ -264,12 +271,8 @@ begin
                     montgomery_enable <= '0';
                     done <= '0';  -- Keep done LOW
                     ready_in <= '1';  -- Ready for next input
-                    -- Clear internal computation registers to prevent state leakage
-                    C_reg <= (others => '0');
-                    P_reg <= (others => '0');
-                    M_mont <= (others => '0');
-                    one_mont <= (others => '0');
-                    bit_index <= 0;
+                    -- Only clear bit_index (other registers cleared on next start)
+                    bit_index <= (others => '0');
                     state <= IDLE;  -- Go back to idle on next clock
                 
                 when others =>

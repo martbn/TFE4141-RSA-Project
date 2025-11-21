@@ -28,17 +28,19 @@ end montgomery_mult_controller;
 
 architecture Behavioral of montgomery_mult_controller is
 
-    -- State machine states
+    -- State machine states - use binary encoding for area optimization
     type state_type is (IDLE, INIT, ADD1, ADD2, SHIFT, FINAL_SUB, FINISHED);
+    attribute ENUM_ENCODING : string;
+    attribute ENUM_ENCODING of state_type : type is "sequential";
     signal state, next_state : state_type := IDLE;
 
-    -- Bit counter
-    signal counter : integer range 0 to WIDTH := 0;
+    -- Bit counter - use unsigned for better synthesis
+    signal counter : unsigned(7 downto 0) := (others => '0');
 begin
     -- Control signals for datapath
     -- Expose state as a small vector for waveform/debug
     state_out <= std_logic_vector(to_unsigned(state_type'pos(state), 3));
-    counter_out <= std_logic_vector(to_unsigned(counter, 32));
+    counter_out <= std_logic_vector(resize(counter, 32));
     -- Combinational process: compute next state and outputs based on current state and inputs
     comb_proc : process(state, enable, counter)
     begin
@@ -75,7 +77,7 @@ begin
 
             when SHIFT =>
                 shift_registers <= '1';
-                if counter < WIDTH-1 then
+                if counter < to_unsigned(WIDTH-1, 8) then
                     next_state <= ADD1;
                 else
                     next_state <= FINAL_SUB;
@@ -104,15 +106,13 @@ begin
     begin
         if reset = '1' then
             state <= IDLE;
-            counter <= 0;
+            counter <= (others => '0');
         elsif rising_edge(clk) then
             state <= next_state;
             if state = INIT then
-                counter <= 0;
+                counter <= (others => '0');
             elsif state = SHIFT then
-                if counter < WIDTH then
-                    counter <= counter + 1;
-                end if;
+                counter <= counter + 1;
             end if;
         end if;
     end process seq_proc;

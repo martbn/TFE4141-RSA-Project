@@ -43,16 +43,21 @@ architecture Behavioral of montgomery_mult_datapath is
     signal AiB_comb  : std_logic_vector(WIDTH+1 downto 0);
     signal AiB_reg   : std_logic_vector(WIDTH+1 downto 0);
     signal qi_reg    : std_logic := '0';
-    signal N_mux     : std_logic_vector(WIDTH downto 0);
     signal a_lsb : std_logic := '0';
+    
+    -- Synthesis directives for area optimization
+    attribute USE_DSP : string;
+    attribute USE_DSP of S_reg : signal is "no";
+    attribute SHREG_EXTRACT : string;
+    attribute SHREG_EXTRACT of A_reg : signal is "no";
+    attribute SHREG_EXTRACT of B_reg : signal is "no";
+    attribute SHREG_EXTRACT of N_reg : signal is "no";
 
 begin
     a_lsb <= A_reg(0);
     AiB_input <= ('0' & B_reg) when a_lsb = '1' else (others => '0');
     -- Compute full WIDTH+2-bit sum from res_reg and AiB_input (avoid accidental MSB truncation)
     AiB_comb <= std_logic_vector(resize(unsigned(res_reg), WIDTH+2) + resize(unsigned(AiB_input), WIDTH+2));
-
-    N_mux <= ('0' & N_reg) when qi_reg = '1' else (others => '0');
 
     
     ResShift_proc : process(clk, reset)
@@ -61,9 +66,6 @@ begin
         variable n_ext: unsigned(WIDTH downto 0);
     begin
         if reset = '1' then
-            A_reg <= (others => '0');
-            B_reg <= (others => '0');
-            N_reg <= (others => '0');
             res_reg <= (others => '0');
            
         elsif rising_edge(clk) then
@@ -75,15 +77,16 @@ begin
 
             elsif finalize = '1' then
                 -- Final conditional subtraction: if res_reg >= N then res_reg := res_reg - N
-                -- Work in unsigned arithmetic with matching widths (WIDTH+1 bits)
+                -- Optimize: compute difference and use MSB for selection
                 r_u := unsigned(res_reg);
                 n_ext := unsigned('0' & N_reg);
-                if r_u >= n_ext then
-                    res_reg <= std_logic_vector(r_u - n_ext);
-                else
-                    -- keep res_reg unchanged (no action)
-                    null;
+                -- Compute res - N
+                r_u := r_u - n_ext;
+                -- If MSB is 0, subtraction didn't underflow, use new value
+                if r_u(WIDTH) = '0' then
+                    res_reg <= std_logic_vector(r_u);
                 end if;
+                -- else keep res_reg unchanged
 
             elsif shift_registers = '1' then
                 -- shift right by one: take bits [WIDTH+1 downto 1] -> WIDTH+1 bits into res_reg
@@ -98,7 +101,6 @@ begin
     AiB_reg_proc : process(clk, reset)
     begin
         if reset = '1' then
-            AiB_reg <= (others => '0');
             qi_reg <= '0';
         elsif rising_edge(clk) then
             if load_registers = '1' then
@@ -112,14 +114,12 @@ begin
     end process AiB_reg_proc;
 
     -- Cycle 2: compute S_reg = AiB_reg + (qi_reg ? N : 0) when compute_S asserted
-    S_compute_proc : process(clk, reset)
+    S_compute_proc : process(clk)
         -- need one extra bit to hold AiB_reg + N without overflow
         variable sum2 : unsigned(WIDTH+1 downto 0);
     begin
-        if reset = '1' then
-            S_reg <= (others => '0');
-        elsif rising_edge(clk) then
-            if load_registers = '1' then
+        if rising_edge(clk) then
+            if reset = '1' or load_registers = '1' then
                 S_reg <= (others => '0');
             elsif compute_S = '1' then
                 if qi_reg = '0' then

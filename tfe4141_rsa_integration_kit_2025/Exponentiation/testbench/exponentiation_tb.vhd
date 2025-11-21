@@ -1,8 +1,12 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use std.env.all;
 
 entity exponentiation_tb is
+    generic (
+        AUTO_FINISH : boolean := false  -- if true, TB will call finish(0) at end
+    );
 end exponentiation_tb;
 
 architecture behavior of exponentiation_tb is
@@ -396,7 +400,14 @@ begin
     end if;
 
     report "Simulation finished" severity note;
-    wait;
+    if AUTO_FINISH then
+        wait for 50 ns;
+        report "AUTO_FINISH enabled: terminating simulation" severity note;
+        finish(0);
+        wait;
+    else
+        wait;
+    end if;
     end process stim;
 
 end behavior;

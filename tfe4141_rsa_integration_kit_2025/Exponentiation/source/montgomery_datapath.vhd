@@ -80,7 +80,7 @@ begin
                 r_u := unsigned(res_reg);
                 n_ext := unsigned('0' & N_reg);
                 -- Compute res - N
-                r_u := r_u - n_ext
+                r_u := r_u - n_ext;
                 if r_u(WIDTH) = '0' then
                     res_reg <= std_logic_vector(r_u);
                 end if;

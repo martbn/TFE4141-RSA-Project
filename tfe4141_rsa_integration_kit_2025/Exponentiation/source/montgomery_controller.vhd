@@ -33,7 +33,7 @@ architecture Behavioral of montgomery_mult_controller is
     attribute ENUM_ENCODING of state_type : type is "sequential";
     signal state, next_state : state_type := IDLE;
 
-    -
+    
     signal counter : unsigned(7 downto 0) := (others => '0');
 begin
     

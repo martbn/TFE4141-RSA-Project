@@ -19,6 +19,7 @@ entity montgomery_mult_datapath is
           finalize     : in std_logic;
 
            -- Control interface
+            -- Goes high when computation is finished (stays high until enable='0')
 
            A      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplicand
            B      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplier
@@ -43,6 +44,7 @@ architecture Behavioral of montgomery_mult_datapath is
     signal a_lsb : std_logic := '0';
     
     -- Synthesis directives for area optimization
+    -- Use FFs instead of LUTs for registers by preventing shift register extraction
     attribute USE_DSP : string;
     attribute USE_DSP of S_reg : signal is "no";
     attribute SHREG_EXTRACT : string;

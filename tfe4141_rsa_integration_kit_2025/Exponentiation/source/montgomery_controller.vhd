@@ -4,24 +4,23 @@ use ieee.numeric_std.all;
 
 entity montgomery_mult_controller is
     generic (
-           WIDTH : integer := 256  -- Operand width (e.g. 1024 bits for RSA)
+           WIDTH : integer := 256
     );
     port (
            -- Clock and reset
            clk    : in  std_logic;   -- Clock
            reset  : in  std_logic;   -- Active-high reset
 
-              -- Control signals for datapath
-              Compute_AiB : out std_logic;
-              Compute_S   : out std_logic;
-              load_registers : out std_logic;
-              shift_registers : out std_logic;
-              finalize : out std_logic;
-               state_out : out std_logic_vector(2 downto 0);
-               counter_out : out std_logic_vector(31 downto 0);
-              -- Control interface
-          enable : in  std_logic;   -- L  evel-sensitive start signal
-          done   : out std_logic   -- Goes high when computation is finished (stays high until enable='0')
+            Compute_AiB : out std_logic;
+            Compute_S   : out std_logic;
+            load_registers : out std_logic;
+            shift_registers : out std_logic;
+            finalize : out std_logic;
+            state_out : out std_logic_vector(2 downto 0);
+            counter_out : out std_logic_vector(31 downto 0);
+              
+          enable : in  std_logic;   
+          done   : out std_logic   
 
     );
 end montgomery_mult_controller;
@@ -34,13 +33,14 @@ architecture Behavioral of montgomery_mult_controller is
     attribute ENUM_ENCODING of state_type : type is "sequential";
     signal state, next_state : state_type := IDLE;
 
-    -- Bit counter - use unsigned for better synthesis
+    -
     signal counter : unsigned(7 downto 0) := (others => '0');
 begin
-    -- Control signals for datapath
-    -- Expose state as a small vector for waveform/debug
+    
     state_out <= std_logic_vector(to_unsigned(state_type'pos(state), 3));
     counter_out <= std_logic_vector(resize(counter, 32));
+
+
     -- Combinational process: compute next state and outputs based on current state and inputs
     comb_proc : process(state, enable, counter)
     begin

@@ -11,7 +11,7 @@ entity montgomery_mult_datapath is
            clk    : in  std_logic;   
            reset  : in  std_logic;   
 
-           -- Control strobes (driven by controller)
+           -- Control signals
            load_registers : in std_logic;
            shift_registers : in std_logic;
            compute_AiB : in std_logic;  
@@ -19,7 +19,6 @@ entity montgomery_mult_datapath is
           finalize     : in std_logic;
 
            -- Control interface
-     -- Goes high when computation is finished (stays high until enable='0')
 
            A      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplicand
            B      : in  std_logic_vector(WIDTH-1 downto 0);  -- Multiplier
@@ -29,10 +28,8 @@ entity montgomery_mult_datapath is
 end montgomery_mult_datapath;
 
 architecture Behavioral of montgomery_mult_datapath is
-    -- Registers and pipeline signals
-    -- S_reg needs one extra bit to hold AiB_reg + N without overflow
+    -- Registers 
     signal S_reg : std_logic_vector(WIDTH+1 downto 0);
-    -- res_reg also needs one extra bit to hold the shifted result
     signal res_reg : std_logic_vector(WIDTH downto 0);  -- accumulator (WIDTH+1 bits)
     signal A_reg : std_logic_vector(WIDTH-1 downto 0);
     signal B_reg : std_logic_vector(WIDTH-1 downto 0);
@@ -81,12 +78,11 @@ begin
                 r_u := unsigned(res_reg);
                 n_ext := unsigned('0' & N_reg);
                 -- Compute res - N
-                r_u := r_u - n_ext;
-                -- If MSB is 0, subtraction didn't underflow, use new value
+                r_u := r_u - n_ext
                 if r_u(WIDTH) = '0' then
                     res_reg <= std_logic_vector(r_u);
                 end if;
-                -- else keep res_reg unchanged
+                
 
             elsif shift_registers = '1' then
                 -- shift right by one: take bits [WIDTH+1 downto 1] -> WIDTH+1 bits into res_reg
@@ -115,7 +111,6 @@ begin
 
     -- Cycle 2: compute S_reg = AiB_reg + (qi_reg ? N : 0) when compute_S asserted
     S_compute_proc : process(clk)
-        -- need one extra bit to hold AiB_reg + N without overflow
         variable sum2 : unsigned(WIDTH+1 downto 0);
     begin
         if rising_edge(clk) then
@@ -123,7 +118,6 @@ begin
                 S_reg <= (others => '0');
             elsif compute_S = '1' then
                 if qi_reg = '0' then
-                    -- place AiB_reg into S_reg
                     S_reg <= AiB_reg;
                 else
                     -- sum = AiB_reg + N (both WIDTH+1 bits) -> requires WIDTH+2 bits

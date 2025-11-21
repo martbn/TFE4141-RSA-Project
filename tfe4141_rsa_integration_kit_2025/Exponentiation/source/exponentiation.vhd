@@ -41,14 +41,14 @@ architecture Structural of exponentiation is
 	signal  B : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  N : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
 	signal  S : STD_LOGIC_VECTOR (C_block_size-1 downto 0);
-	-- internal reset (montgomery expects active-high reset)
+
+	-- internal reset
 	signal  reset : std_logic;
 	signal  enable_mult : STD_LOGIC;
 	signal  done_mult : STD_LOGIC;
 
 begin
 	
-	-- Instantiate Exponentiation Controller
 	controller_inst : entity work.exponentiation_controller
 	generic map (
 		C_block_size => C_block_size
@@ -75,7 +75,6 @@ begin
 	);
 
 	-- Instantiate Montgomery Multiplier
-	-- tie internal reset (montgomery expects active-high reset)
 	reset <= not reset_n;
 
 	montgomery_inst : entity work.montgomery

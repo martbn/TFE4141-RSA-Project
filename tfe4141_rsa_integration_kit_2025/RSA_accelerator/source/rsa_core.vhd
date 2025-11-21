@@ -23,7 +23,7 @@ entity rsa_core is
 	generic (
 		-- Users to add parameters here
 		C_BLOCK_SIZE          : integer := 256;
-		-- Number of parallel exponentiation cores
+		-- Number of cores
 		Num_Cores             : integer := 12
 	);
 	port (
@@ -71,7 +71,7 @@ end rsa_core;
 
 architecture rtl of rsa_core is
 
-	-- Arrays for core outputs and metadata
+	-- Arrays for core outputs
 	type result_array_type is array (0 to Num_Cores-1) of std_logic_vector(C_BLOCK_SIZE-1 downto 0);
 	signal core_results        : result_array_type;
 	signal boundary_markers    : std_logic_vector(Num_Cores-1 downto 0);
@@ -84,7 +84,7 @@ architecture rtl of rsa_core is
 	signal core_finished       : std_logic_vector(Num_Cores-1 downto 0);
 	signal core_occupied       : std_logic_vector(Num_Cores-1 downto 0);
 	
-	-- Circular scheduler pointers for sequential core allocation
+	-- Circular scheduler for core allocation
 	signal active_input_index       : integer range 0 to Num_Cores-1;
 	signal active_input_index_next  : integer range 0 to Num_Cores-1;
 	signal active_output_index      : integer range 0 to Num_Cores-1;
@@ -98,7 +98,7 @@ architecture rtl of rsa_core is
 	signal current_output_state, upcoming_output_state : output_scheduler_state;
 
 begin
-	-- Instantiate parallel exponentiation cores
+	-- Instantiate cores
 	Core_array : for i in 0 to Num_Cores-1 generate
 	begin
 		i_exponentiation : entity work.exponentiation
@@ -120,7 +120,7 @@ begin
 				reset_n         => reset_n
 			);
 		
-		-- Monitor occupancy: becomes occupied on trigger, released on acknowledge
+		-- Monitor occupancy
 		Core_status : process(clk, reset_n)
 		begin
 			if reset_n = '0' then
@@ -137,7 +137,7 @@ begin
 		end process;
 	end generate Core_array;
 	
-	-- Dispatch controller: Synchronous state and control updates
+	-- Dispatch controller
 	Dispatch_registers : process(clk, reset_n)
 	begin
 		if reset_n = '0' then
@@ -151,10 +151,8 @@ begin
 		end if;
 	end process;
 	
-	-- Dispatch controller: Combinational logic for task distribution
 	Dispatch_logic : process(current_input_state, msgin_valid, core_occupied, active_input_index)
 	begin
-		-- Default assignments
 		msgin_ready <= '0';
 		trigger_core_next <= (others => '0');
 		active_input_index_next <= active_input_index;
@@ -171,7 +169,6 @@ begin
 				if core_occupied(active_input_index) = '0' then
 					trigger_core_next(active_input_index) <= '1';
 					
-					-- Move to next core position with wraparound
 					if active_input_index = (Num_Cores - 1) then
 						active_input_index_next <= 0;
 					else
@@ -192,7 +189,7 @@ begin
 		end case;
 	end process;
 	
-	-- Collection controller: Synchronous state and control updates
+	-- Collection controller
 	Collection_registers : process(clk, reset_n)
 	begin
 		if reset_n = '0' then
@@ -206,10 +203,9 @@ begin
 		end if;
 	end process;
 	
-	-- Collection controller: Combinational logic for gathering results
+	-- Collection controller
 	Collection_logic : process(current_output_state, active_output_index, core_finished, msgout_ready, core_results, boundary_markers)
 	begin
-		-- Default assignments
 		msgout_data <= (others => '0');
 		msgout_valid <= '0';
 		msgout_last <= '0';
@@ -232,7 +228,6 @@ begin
 					
 					acknowledge_core_next(active_output_index) <= '1';
 					
-					-- Proceed to next core in sequence with wraparound
 					if active_output_index = (Num_Cores - 1) then
 						active_output_index_next <= 0;
 					else

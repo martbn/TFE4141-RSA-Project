@@ -57,24 +57,22 @@ architecture Behavioral of exponentiation_controller is
         -- Montgomery domain conversion states
         CONVERT_M_TO_MONT,      -- Convert M to Montgomery: M' = M * R^2 * R^-1 = M * R
         WAIT_M_CONV,            -- Wait for M conversion
-        SETUP_1_CONV,           -- Setup for 1 conversion (delay state)
         CONVERT_1_TO_MONT,      -- Convert 1 to Montgomery: 1' = 1 * R^2 * R^-1 = R
         WAIT_1_CONV,            -- Wait for 1 conversion
         -- RL algorithm states
         INIT_RL,                -- Initialize C := 1, P := M (in Montgomery domain)
         LOOP_CHECK,             -- Check if loop should continue
-        SETUP_C_P,              -- Setup for C*P multiplication (delay state)
         MULT_C_P,               -- Step 2a: if ei = 1, C := C * P (mod n)
         WAIT_C_P,               -- Wait for C*P multiplication
-        SETUP_P_P,              -- Setup for P*P multiplication (delay state)
         MULT_P_P,               -- Step 2b: P := P * P (mod n)
         WAIT_P_P,               -- Wait for P*P multiplication
-        SETUP_FROM_CONV,        -- Setup for Montgomery to normal conversion (delay state)
         CONVERT_FROM_MONT,      -- Convert result from Montgomery domain: C_final = C' * 1 * R^-1
         WAIT_FROM_CONV,         -- Wait for final conversion
         OUTPUT_RESULT,          -- Output the result
         DONE_STATE              -- Cleanup state before returning to IDLE
     );
+    attribute ENUM_ENCODING : string;
+    attribute ENUM_ENCODING of state_type : type is "sequential";
     
     signal state : state_type := IDLE;
     
@@ -161,13 +159,8 @@ begin
                     if montgomery_done = '1' then
                         montgomery_enable <= '0';
                         M_mont <= montgomery_S;
-                        state <= SETUP_1_CONV;
+                        state <= CONVERT_1_TO_MONT;
                     end if;
-                
-                -- Setup state: Let Montgomery module reset before next operation
-                when SETUP_1_CONV =>
-                    montgomery_enable <= '0';
-                    state <= CONVERT_1_TO_MONT;
                 
                 -- Convert 1 to Montgomery domain: 1' = 1 * R^2 * R^-1 mod n = R mod n
                 when CONVERT_1_TO_MONT =>
@@ -198,20 +191,15 @@ begin
                     if bit_index < key_length then
                         -- Sample current bit and check if ei is 1
                         if key_reg(bit_index) = '1' then
-                            state <= SETUP_C_P;
+                            state <= MULT_C_P;
                         else
                             -- Skip C*P multiplication, go directly to P*P squaring
-                            state <= SETUP_P_P;
+                            state <= MULT_P_P;
                         end if;
                     else
                         -- All bits processed, convert result back from Montgomery domain
-                        state <= SETUP_FROM_CONV;
+                        state <= CONVERT_FROM_MONT;
                     end if;
-                
-                -- Setup state for C*P multiplication
-                when SETUP_C_P =>
-                    montgomery_enable <= '0';
-                    state <= MULT_C_P;
                 
                 -- Step 2a: C := C * P (mod n)
                 when MULT_C_P =>
@@ -225,13 +213,8 @@ begin
                     if montgomery_done = '1' then
                         montgomery_enable <= '0';
                         C_reg <= montgomery_S;
-                        state <= SETUP_P_P;
+                        state <= MULT_P_P;
                     end if;
-                
-                -- Setup state for P*P multiplication
-                when SETUP_P_P =>
-                    montgomery_enable <= '0';
-                    state <= MULT_P_P;
                 
                 -- Step 2b: P := P * P (mod n) - squaring
                 when MULT_P_P =>
@@ -248,11 +231,6 @@ begin
                         bit_index <= bit_index + 1;
                         state <= LOOP_CHECK;
                     end if;
-                
-                -- Setup state for final conversion
-                when SETUP_FROM_CONV =>
-                    montgomery_enable <= '0';
-                    state <= CONVERT_FROM_MONT;
                 
                 -- Convert result from Montgomery domain: result = C' * 1 * R^-1 mod n
                 when CONVERT_FROM_MONT =>

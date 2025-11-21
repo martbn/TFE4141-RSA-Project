@@ -83,6 +83,7 @@ begin
     );
 
     -- stimulus process: apply reset, single test vector, wait for result
+    stim : process
         variable cycles : integer := 0;
         constant TIMEOUT_CYCLES : integer := 30000; -- safety timeout
         variable small_timeout : integer := 500; -- short timeout for per-test ready wait (allows forcing a pulse)
@@ -108,6 +109,7 @@ begin
 
     -- Wait for DUT to indicate ready to accept inputs
     cycles := 0;
+    while ready_in /= '1' loop
         wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
@@ -165,10 +167,10 @@ begin
 
     wait until rising_edge(clk);
     valid_in <= '0';
-    -- Wait for DUT to indicate ready to accept inputs
+    -- Wait for DUT to indicate ready to accept inputs (B2)
     cycles := 0;
     while ready_in /= '1' loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for ready_in (Test B2)" severity failure;
@@ -186,7 +188,7 @@ begin
 
     cycles := 0;
     while not (valid_out = '1' and ready_out = '1') loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for valid_out & ready_out (Test B2)" severity failure;
@@ -225,10 +227,10 @@ begin
 
     wait until rising_edge(clk);
     valid_in <= '0';
-    -- Wait for DUT to indicate ready to accept inputs
+    -- Wait for DUT to indicate ready to accept inputs (B)
     cycles := 0;
     while ready_in /= '1' loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for ready_in (Test B)" severity failure;
@@ -246,7 +248,7 @@ begin
 
     cycles := 0;
     while not (valid_out = '1' and ready_out = '1') loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for valid_out & ready_out (Test B)" severity failure;
@@ -290,7 +292,7 @@ begin
     -- Wait for DUT to indicate it's ready to accept inputs (ready_in), sampled on rising edges.
     cycles := 0;
     while ready_in /= '1' loop
-        wait until rising_edge(clk);
+            wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > small_timeout then
             report "WARNING: ready_in did not assert within small timeout for Test C; forcing valid_in pulse" severity warning;
@@ -308,13 +310,13 @@ begin
     wait until rising_edge(clk);
     valid_in <= '0';
     report "TEST C: valid_in pulsed" severity note;
-
+            wait until rising_edge(clk);
     cycles := 0;
     while not (valid_out = '1' and ready_out = '1') loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
-            report "TIMEOUT waiting for valid_out & ready_out (Test B)" severity failure;
+            report "TIMEOUT waiting for valid_out & ready_out (Test C)" severity failure;
             wait;
         end if;
     end loop;
@@ -364,7 +366,7 @@ begin
 
     cycles := 0;
     while not (valid_out = '1' and ready_out = '1') loop
-        wait for 10 ns;
+        wait until rising_edge(clk);
         cycles := cycles + 1;
         if cycles > TIMEOUT_CYCLES then
             report "TIMEOUT waiting for valid_out & ready_out (Test D)" severity failure;

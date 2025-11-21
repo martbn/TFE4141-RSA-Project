@@ -37,7 +37,7 @@ entity exponentiation_controller is
 end exponentiation_controller;
 
 architecture Behavioral of exponentiation_controller is
-    
+    -- Calculate bit length of the exponent key to the first '1' from MSB
     function calc_bit_length(key_val : STD_LOGIC_VECTOR) return integer is
     begin
         for i in key_val'high downto key_val'low loop
@@ -94,6 +94,7 @@ architecture Behavioral of exponentiation_controller is
     signal key_length : unsigned(8 downto 0) := (others => '0'); -- 0-256
     
     -- Area optimization attributes
+    -- Uses Flip-Flops instead of LUTs for registers by forcing vivado to not extract shift registers
     attribute SHREG_EXTRACT : string;
     attribute SHREG_EXTRACT of message_reg : signal is "no";
     attribute SHREG_EXTRACT of key_reg : signal is "no";

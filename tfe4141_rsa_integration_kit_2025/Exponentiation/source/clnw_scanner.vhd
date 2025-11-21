@@ -59,7 +59,12 @@ begin
             -- Use the current exp_counter to index key, and compute next_cnt in a variable
             if key(exp_counter) = '1' then
                 zero_count <= 0;
-                MSB <= exp_counter + window_size-1;
+                -- Clamp MSB to curr_pos to avoid extending window beyond key's actual MSB
+                if exp_counter + window_size - 1 > curr_pos then
+                    MSB <= curr_pos;
+                else
+                    MSB <= exp_counter + window_size-1;
+                end if;
                 LSB <= exp_counter;
                 next_cnt := exp_counter + window_size;
                 window_type <= 1;  -- non-zero window

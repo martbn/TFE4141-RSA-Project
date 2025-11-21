@@ -28,7 +28,6 @@ entity exponentiation is
 		-- Montgomery R constants
 		R_squared_mod_n   : in STD_LOGIC_VECTOR(C_block_size-1 downto 0);
 
-
 		--utility
 		clk 		: in STD_LOGIC;
 		reset_n 	: in STD_LOGIC
@@ -47,7 +46,7 @@ architecture Structural of exponentiation is
 	signal  done_mult : STD_LOGIC;
 
 begin
-	
+    
 	-- Instantiate Exponentiation Controller
 	controller_inst : entity work.exponentiation_controller
 	generic map (

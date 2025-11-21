@@ -18,7 +18,7 @@ entity montgomery_mult_controller is
               shift_registers : out std_logic;
               finalize : out std_logic;
                state_out : out std_logic_vector(2 downto 0);
-               counter_out : out std_logic_vector(31 downto 0);
+               counter_out : out std_logic_vector(9 downto 0);
               -- Control interface
           enable : in  std_logic;   -- L  evel-sensitive start signal
           done   : out std_logic   -- Goes high when computation is finished (stays high until enable='0')
@@ -34,11 +34,14 @@ architecture Behavioral of montgomery_mult_controller is
 
     -- Bit counter
     signal counter : integer range 0 to WIDTH := 0;
+    -- Internal vector to drive the counter_out port; initialize to zeros to avoid unset bits
+    signal counter_vec : std_logic_vector(counter_out'range) := (others => '0');
 begin
     -- Control signals for datapath
     -- Expose state as a small vector for waveform/debug
     state_out <= std_logic_vector(to_unsigned(state_type'pos(state), 3));
-    counter_out <= std_logic_vector(to_unsigned(counter, 32));
+    -- Drive counter_out from an initialized internal signal to ensure defined bits at time 0
+    counter_out <= counter_vec;
     -- Combinational process: compute next state and outputs based on current state and inputs
     comb_proc : process(state, enable, counter)
     begin
@@ -105,13 +108,16 @@ begin
         if reset = '1' then
             state <= IDLE;
             counter <= 0;
+            counter_vec <= (others => '0');
         elsif rising_edge(clk) then
             state <= next_state;
             if state = INIT then
                 counter <= 0;
+                counter_vec <= std_logic_vector(to_unsigned(0, counter_vec'length));
             elsif state = SHIFT then
                 if counter < WIDTH then
                     counter <= counter + 1;
+                    counter_vec <= std_logic_vector(to_unsigned(counter + 1, counter_vec'length));
                 end if;
             end if;
         end if;

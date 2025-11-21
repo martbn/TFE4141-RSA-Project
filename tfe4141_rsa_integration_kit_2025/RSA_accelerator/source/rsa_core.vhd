@@ -71,35 +71,35 @@ end rsa_core;
 
 architecture rtl of rsa_core is
 
-	-- Matrix for core outputs and flags
-	type t_matrix is array (0 to Num_Cores-1) of std_logic_vector(C_BLOCK_SIZE-1 downto 0);
-	signal msgout_vector       : t_matrix;
-	signal core_flag_out       : std_logic_vector(Num_Cores-1 downto 0);
+	-- Arrays for core outputs and metadata
+	type result_array_type is array (0 to Num_Cores-1) of std_logic_vector(C_BLOCK_SIZE-1 downto 0);
+	signal core_results        : result_array_type;
+	signal boundary_markers    : std_logic_vector(Num_Cores-1 downto 0);
 	
-	-- Core control signals
-	signal cores_start         : std_logic_vector(Num_Cores-1 downto 0);
-	signal cores_start_nxt     : std_logic_vector(Num_Cores-1 downto 0);
-	signal cores_clear         : std_logic_vector(Num_Cores-1 downto 0);
-	signal cores_clear_nxt     : std_logic_vector(Num_Cores-1 downto 0);
-	signal cores_done          : std_logic_vector(Num_Cores-1 downto 0);
-	signal cores_busy          : std_logic_vector(Num_Cores-1 downto 0);
+	-- Core management signals
+	signal trigger_core        : std_logic_vector(Num_Cores-1 downto 0);
+	signal trigger_core_next   : std_logic_vector(Num_Cores-1 downto 0);
+	signal acknowledge_core    : std_logic_vector(Num_Cores-1 downto 0);
+	signal acknowledge_core_next : std_logic_vector(Num_Cores-1 downto 0);
+	signal core_finished       : std_logic_vector(Num_Cores-1 downto 0);
+	signal core_occupied       : std_logic_vector(Num_Cores-1 downto 0);
 	
-	-- Round-robin counters
-	signal next_to_start       : integer range 0 to Num_Cores-1;
-	signal next_to_start_nxt   : integer range 0 to Num_Cores-1;
-	signal next_to_finish      : integer range 0 to Num_Cores-1;
-	signal next_to_finish_nxt  : integer range 0 to Num_Cores-1;
+	-- Circular scheduler pointers for sequential core allocation
+	signal active_input_index       : integer range 0 to Num_Cores-1;
+	signal active_input_index_next  : integer range 0 to Num_Cores-1;
+	signal active_output_index      : integer range 0 to Num_Cores-1;
+	signal active_output_index_next : integer range 0 to Num_Cores-1;
 	
 	-- FSM types and signals
-	type state_type_input is (IDLE, CHECK_CORES, WAIT_FOR_CORE_START);
-	signal Input_State, NIS    : state_type_input;
+	type input_scheduler_state is (WAITING, SCAN_AVAILABILITY, ASSIGN_TASK);
+	signal current_input_state, upcoming_input_state : input_scheduler_state;
 	
-	type state_type_output is (MONITOR_CORE_OUTPUT, WRITE_DATA);
-	signal Output_State, NOS   : state_type_output;
+	type output_scheduler_state is (POLL_COMPLETION, TRANSMIT_RESULT);
+	signal current_output_state, upcoming_output_state : output_scheduler_state;
 
 begin
-	-- Generate Num_Cores exponentiation cores with start/clear control
-	Cores : for i in 0 to Num_Cores-1 generate
+	-- Instantiate parallel exponentiation cores
+	Core_array : for i in 0 to Num_Cores-1 generate
 	begin
 		i_exponentiation : entity work.exponentiation
 			generic map (
@@ -110,140 +110,142 @@ begin
 				key             => key_e_d,
 				R_squared_mod_n => R_squared_mod_n,
 				R_mod_n         => R_mod_n,
-				valid_in        => cores_start(i),
-				ready_in        => open,  -- Not used in this architecture
-				ready_out       => cores_clear(i),
-				valid_out       => cores_done(i),
-				result          => msgout_vector(i),
+				valid_in        => trigger_core(i),
+				ready_in        => open,
+				ready_out       => acknowledge_core(i),
+				valid_out       => core_finished(i),
+				result          => core_results(i),
 				modulus         => key_n,
 				clk             => clk,
 				reset_n         => reset_n
 			);
 		
-		-- Track busy state: set on start, cleared on clear
-		process(clk, reset_n)
+		-- Monitor occupancy: becomes occupied on trigger, released on acknowledge
+		Core_status : process(clk, reset_n)
 		begin
 			if reset_n = '0' then
-				cores_busy(i) <= '0';
-				core_flag_out(i) <= '0';
+				core_occupied(i) <= '0';
+				boundary_markers(i) <= '0';
 			elsif rising_edge(clk) then
-				if cores_start(i) = '1' then
-					cores_busy(i) <= '1';
-					core_flag_out(i) <= msgin_last;
-				elsif cores_clear(i) = '1' then
-					cores_busy(i) <= '0';
+				if trigger_core(i) = '1' then
+					core_occupied(i) <= '1';
+					boundary_markers(i) <= msgin_last;
+				elsif acknowledge_core(i) = '1' then
+					core_occupied(i) <= '0';
 				end if;
 			end if;
 		end process;
-	end generate Cores;
+	end generate Core_array;
 	
-	-- Input FSM: Synchronous state update
-	Sync_input : process(clk, reset_n)
+	-- Dispatch controller: Synchronous state and control updates
+	Dispatch_registers : process(clk, reset_n)
 	begin
 		if reset_n = '0' then
-			cores_start <= (others => '0');
-			next_to_start <= 0;
-			Input_State <= IDLE;
+			trigger_core <= (others => '0');
+			active_input_index <= 0;
+			current_input_state <= WAITING;
 		elsif rising_edge(clk) then
-			cores_start <= cores_start_nxt;
-			next_to_start <= next_to_start_nxt;
-			Input_State <= NIS;
+			trigger_core <= trigger_core_next;
+			active_input_index <= active_input_index_next;
+			current_input_state <= upcoming_input_state;
 		end if;
 	end process;
 	
-	-- Input FSM: Combinational next-state logic
-	Input_fsm : process(Input_State, msgin_valid, cores_busy, next_to_start)
+	-- Dispatch controller: Combinational logic for task distribution
+	Dispatch_logic : process(current_input_state, msgin_valid, core_occupied, active_input_index)
 	begin
+		-- Default assignments
 		msgin_ready <= '0';
-		cores_start_nxt <= (others => '0');
-		next_to_start_nxt <= next_to_start;
+		trigger_core_next <= (others => '0');
+		active_input_index_next <= active_input_index;
 		
-		case Input_State is
-			when IDLE =>
+		case current_input_state is
+			when WAITING =>
 				if msgin_valid = '1' then
-					NIS <= CHECK_CORES;
+					upcoming_input_state <= SCAN_AVAILABILITY;
 				else
-					NIS <= IDLE;
+					upcoming_input_state <= WAITING;
 				end if;
 				
-			when CHECK_CORES =>
-				if cores_busy(next_to_start) = '0' then
-					cores_start_nxt(next_to_start) <= '1';
+			when SCAN_AVAILABILITY =>
+				if core_occupied(active_input_index) = '0' then
+					trigger_core_next(active_input_index) <= '1';
 					
-					-- Increment counter with wrap-around
-					if next_to_start >= (Num_Cores - 1) then
-						next_to_start_nxt <= 0;
+					-- Move to next core position with wraparound
+					if active_input_index = (Num_Cores - 1) then
+						active_input_index_next <= 0;
 					else
-						next_to_start_nxt <= next_to_start + 1;
+						active_input_index_next <= active_input_index + 1;
 					end if;
 					
-					NIS <= WAIT_FOR_CORE_START;
+					upcoming_input_state <= ASSIGN_TASK;
 				else
-					NIS <= CHECK_CORES;
+					upcoming_input_state <= SCAN_AVAILABILITY;
 				end if;
 				
-			when WAIT_FOR_CORE_START =>
+			when ASSIGN_TASK =>
 				msgin_ready <= '1';
-				NIS <= IDLE;
+				upcoming_input_state <= WAITING;
 				
 			when others =>
-				NIS <= IDLE;
+				upcoming_input_state <= WAITING;
 		end case;
 	end process;
 	
-	-- Output FSM: Synchronous state update
-	Sync_output : process(clk, reset_n)
+	-- Collection controller: Synchronous state and control updates
+	Collection_registers : process(clk, reset_n)
 	begin
 		if reset_n = '0' then
-			cores_clear <= (others => '0');
-			next_to_finish <= 0;
-			Output_State <= MONITOR_CORE_OUTPUT;
+			acknowledge_core <= (others => '0');
+			active_output_index <= 0;
+			current_output_state <= POLL_COMPLETION;
 		elsif rising_edge(clk) then
-			cores_clear <= cores_clear_nxt;
-			next_to_finish <= next_to_finish_nxt;
-			Output_State <= NOS;
+			acknowledge_core <= acknowledge_core_next;
+			active_output_index <= active_output_index_next;
+			current_output_state <= upcoming_output_state;
 		end if;
 	end process;
 	
-	-- Output FSM: Combinational next-state logic
-	Output_fsm : process(Output_State, next_to_finish, cores_done, msgout_ready, msgout_vector, core_flag_out)
+	-- Collection controller: Combinational logic for gathering results
+	Collection_logic : process(current_output_state, active_output_index, core_finished, msgout_ready, core_results, boundary_markers)
 	begin
+		-- Default assignments
 		msgout_data <= (others => '0');
 		msgout_valid <= '0';
 		msgout_last <= '0';
-		cores_clear_nxt <= (others => '0');
-		next_to_finish_nxt <= next_to_finish;
+		acknowledge_core_next <= (others => '0');
+		active_output_index_next <= active_output_index;
 		
-		case Output_State is
-			when MONITOR_CORE_OUTPUT =>
-				if cores_done(next_to_finish) = '1' then
-					NOS <= WRITE_DATA;
+		case current_output_state is
+			when POLL_COMPLETION =>
+				if core_finished(active_output_index) = '1' then
+					upcoming_output_state <= TRANSMIT_RESULT;
 				else
-					NOS <= MONITOR_CORE_OUTPUT;
+					upcoming_output_state <= POLL_COMPLETION;
 				end if;
 				
-			when WRITE_DATA =>
+			when TRANSMIT_RESULT =>
 				if msgout_ready = '1' then
-					msgout_data <= msgout_vector(next_to_finish);
-					msgout_last <= core_flag_out(next_to_finish);
+					msgout_data <= core_results(active_output_index);
+					msgout_last <= boundary_markers(active_output_index);
 					msgout_valid <= '1';
 					
-					cores_clear_nxt(next_to_finish) <= '1';
+					acknowledge_core_next(active_output_index) <= '1';
 					
-					-- Increment counter with wrap-around
-					if next_to_finish >= (Num_Cores - 1) then
-						next_to_finish_nxt <= 0;
+					-- Proceed to next core in sequence with wraparound
+					if active_output_index = (Num_Cores - 1) then
+						active_output_index_next <= 0;
 					else
-						next_to_finish_nxt <= next_to_finish + 1;
+						active_output_index_next <= active_output_index + 1;
 					end if;
 					
-					NOS <= MONITOR_CORE_OUTPUT;
+					upcoming_output_state <= POLL_COMPLETION;
 				else
-					NOS <= WRITE_DATA;
+					upcoming_output_state <= TRANSMIT_RESULT;
 				end if;
 				
 			when others =>
-				NOS <= MONITOR_CORE_OUTPUT;
+				upcoming_output_state <= POLL_COMPLETION;
 		end case;
 	end process;
 
